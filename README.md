@@ -23,4 +23,4 @@ A full fledged InfluxDB is sometimes overkill. I wanted a simple solution on Mys
 
 
 ## Hints
--- Keep the number of tags low. The indexes use a lot of space. Unpopulated fields only take up one bit of data per field per row.
+-- Keep the number of tags low. The indexes use a lot of space. Unpopulated fields only take up one bit of data per field per row (with InnoDB compact row format).
