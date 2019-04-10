@@ -1,0 +1,4 @@
+test,gw=gw1,node=node1 rssi=-123,vcc=3400
+test,gw=gw1,node=node1 rssi=-123,vcc=3400,vcc2=2500
+test,gw=gw1,node=node1 rssi=-456,vcc=9999 1554903544
+test,newtag=blabla,gw=gw1,node=node1 rssi=-123,vcc=3400
