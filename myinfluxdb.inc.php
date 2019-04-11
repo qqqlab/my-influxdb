@@ -9,12 +9,12 @@ private $ts;  //timestamp in unix format
 private $precision = 0; //number of seconds for rounding time stamps
 
 public function setTs($val) {
-  if($this->precision)
+  if($this->precision) 
     $this->ts = intdiv($val, $this->precision) * $this->precision;
   else
     $this->ts = (int)$val;
 }
-
+ 
 public function getTs() {
   return $this->ts;
 }
@@ -87,30 +87,35 @@ function esc($v) {
   return substr($this->db->quote($v), 1, -1);
 }
 
-function load_tblinfo($tblname) {
-  $this->clear();
-  $this->tbl = $tblname;
-  $stm = $this->db->query("SELECT * FROM `$this->tbl` LIMIT 0");
+function getDbTbl() {
+  return MYIF_TABLE_PREFIX . $this->esc($this->tbl);
+}
+
+//get list of tags and fields from database
+function getDbTblInfo() {
+  $tag = [];
+  $fld = [];
+  $stm = $this->db->query('SELECT * FROM `' . $this->getDbTbl() .'` LIMIT 0');
   for($i=0;$i<$stm->columnCount();$i++) {
     $inf = $stm->getColumnMeta($i);
     $type = $inf['native_type'];
     $name = $inf['name'];
     if($name=='ts') continue;
     if($type=='VAR_STRING') {
-      $this->tag[$name]=null;
+      $tag[]=$name;
     }else{
-      $this->fld[$name]=null;
+      $fld[]=$name;
     }
     //print_r($stm->getColumnMeta($i));
   }
-//  print_r($this);
+  return ['tag'=>$tag, 'fld'=>$fld];
 }
 
 //create insert sql from parsed influx
 function insert_sql() {
   if($this->ts===null) return '';
 
-  $sql = 'INSERT INTO `'.$this->esc($this->tbl).'`(ts';
+  $sql = 'INSERT INTO `' . $this->getDbTbl() . '`(ts';
   foreach($this->tag as $k=>$v) $sql .= ',`'.$this->esc($k).'`';
   foreach($this->fld as $k=>$v) $sql .= ',`'.$this->esc($k).'`';
   $sql .= ') VALUES (';
@@ -125,7 +130,7 @@ function insert_sql() {
 function update_sql() {
   if($this->ts===null) return '';
 
-  $sql = 'UPDATE `' . $this->esc($this->tbl) . '` SET ';
+  $sql = 'UPDATE `' . $this->getDbTbl() . '` SET ';
   $first=true;
   foreach($this->fld as $k=>$v) {
     $sql .= ($first?'':',') . '`' . $this->esc($k) . '`=' . $this->esc($v);
@@ -140,24 +145,52 @@ function update_sql() {
 
 
 function create_sql() {
-  $sql = "CREATE TABLE `$this->tbl`(ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP";
-  foreach($this->tag as $k=>$v) $sql.=",`".$this->esc($k)."` VARCHAR(30) NOT NULL";
+  $sql = 'CREATE TABLE `' . $this->getDbTbl() . '`(ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP';
+  foreach($this->tag as $k=>$v) $sql.=",`".$this->esc($k)."` VARCHAR(255) NOT NULL";
   foreach($this->fld as $k=>$v) $sql.=",`".$this->esc($k)."` FLOAT DEFAULT NULL";
-  $sql.=",PRIMARY KEY (ts";
+  $sql.=",PRIMARY KEY (ts"; 
   foreach($this->tag as $k=>$v) $sql.=",`".$this->esc($k)."`";
   $sql.=")";
   foreach($this->tag as $k=>$v) $sql.=",KEY `".$this->esc($k)."`(`".$this->esc($k)."`)";
   $sql.=")";
   return $sql;
 }
+
+function alter() {
+  //load db meta data
+  $meta = $this->getDbTblInfo();
+
+  //create fields
+  foreach($this->fld as $k=>$v) if(!in_array($k,$meta['fld'])) {
+    $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD `' . $this->esc($k) . '` FLOAT NULL DEFAULT NULL' );
+  }
+
+  //create tags
+  $created_tag = false;
+  foreach($this->tag as $k=>$v) if(!in_array($k,$meta['tag'])) {
+    $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD `' . $this->esc($k) . '` VARCHAR(255) NOT NULL AFTER `' . $this->esc(end($meta['tag'])) . '`' );
+    $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD INDEX `' . $this->esc($k) . '` (`' . $this->esc($k) . '`)');
+    $created_tag = true;
+  }
+  if($created_tag) {
+    $meta = $this->getDbTblInfo(); //reload db meta data from altered database
+    $sql = 'ALTER TABLE `' . $this->getDbTbl() . '` DROP PRIMARY KEY, ADD PRIMARY KEY (`ts`';
+    foreach($meta['tag'] as $tag) $sql .= ',`' . $this->esc($tag) . '`';
+    $sql .= ') USING BTREE';
+    $this->db_query($sql);
+  }
+  return "OK";
+}
+
 function db_query($sql) {
   //echo "$sql\n";
   return $this->db->query($sql);
 }
 
 //==========================================================
-// WRITE (insert / update / create table / alter table)
+// CRUD
 //==========================================================
+
 function insert() {
   try{
     $this->db_query($this->insert_sql());
@@ -181,7 +214,7 @@ function update() {
   try{
     $this->db_query($this->update_sql());
   }catch (\PDOException $e) {
-    print_r($e);
+    print_r($e);  
     return "ERROR";
   }
   return "OK";
@@ -197,75 +230,72 @@ function create() {
   return "OK";
 }
 
-function alter() {
-  //load db meta data
-  $meta = new MyInfluxDB();
-  $meta->db = $this->db;
-  $meta->load_tblinfo($this->tbl);
-  $meta_tags = array_keys($meta->tag);
-  $meta_flds = array_keys($meta->fld);
-
-  //create fields
-  foreach($this->fld as $k=>$v) if(!in_array($k,$meta_flds)) {
-    $this->db_query('ALTER TABLE `' . $this->esc($this->tbl) . '` ADD `' . $this->esc($k) . '` FLOAT NULL DEFAULT NULL' );
-  }
-
-  //create tags
-  $created_tag = false;
-  foreach($this->tag as $k=>$v) if(!in_array($k,$meta_tags)) {
-    $this->db_query('ALTER TABLE `' . $this->esc($this->tbl) . '` ADD `' . $this->esc($k) . '` VARCHAR(30) NOT NULL AFTER `' . $this->esc(end($meta_tags)) . '`' );
-    $this->db_query('ALTER TABLE `' . $this->esc($this->tbl) . '` ADD INDEX `' . $this->esc($k) . '` (`' . $this->esc($k) . '`)');
-    $created_tag = true;
-  }
-  if($created_tag) {
-    //reload db meta data
-    $meta = new MyInfluxDB();
-    $meta->db = $this->db;
-    $meta->load_tblinfo($this->tbl);
-    $meta_tags = array_keys($meta->tag);
-    //ALTER TABLE `tbl` DROP INDEX `ts`, ADD UNIQUE `ts` (`ts`, `gw`, `node`) USING BTREE;
-    $sql = 'ALTER TABLE `' . $this->esc($this->tbl) . '` DROP PRIMARY KEY, ADD PRIMARY KEY (`ts`';
-    foreach($meta->tag as $k=>$v) $sql .= ',`' . $this->esc($k) . '`';
-    $sql .= ') USING BTREE';
-    $this->db_query($sql);
-  }
-  return "OK";
-}
-
 //write to db - create table / alter table / insert record / update record as required
-function write() {
+function write_no_log() {
   switch($this->insert()) {
-  case "OK":
-    return "OK insert";
-    break;
-  case "CREATE":
-    switch($this->create()) {
     case "OK":
-      if($this->insert()!="OK") return("ERROR insert2");
-      return "OK create insert";
+      return "OK insert";
+      break;
+    case "CREATE":
+      switch($this->create()) {
+        case "OK":
+          if($this->insert()!="OK") return("ERROR insert2");
+          return "OK create insert";
+          break;
+        default:
+          return("ERROR create");
+      }
+      break;
+    case "ALTER":
+      switch($this->alter()) {
+        case "OK":
+          switch($this->insert()) {
+            case "OK": 
+              return "OK alter insert";
+            case "UPDATE":
+              if($this->update()!="OK") return("ERROR update");
+              return "OK alter update";
+            default: 
+              return("ERROR alter update");
+          }
+          break;
+        default:
+          return("ERROR alter");
+      }
+      break;
+    case "UPDATE":
+      if($this->update()!="OK") return("ERROR update");
+      return "OK update";
       break;
     default:
-      return("ERROR create");
-    }
-    break;
-  case "ALTER":
-    switch($this->alter()) {
-    case "OK":
-      if($this->insert()!="OK") return("ERROR insert3");
-      return "OK alter insert";
-      break;
-    default:
-      return("ERROR alter");
-    }
-    break;
-  case "UPDATE":
-    if($this->update()!="OK") return("ERROR update");
-    return "OK update";
-    break;
-  default:
-    return("ERROR insert");
+      return("ERROR insert");
   }
   return "ERROR unknown";
 }
 
+function write($influx) {
+  $this->parse($influx);
+  $result = $this->write_no_log();
+  if(MYIF_LOG_DAYS>0) {
+    try{
+      $this->db
+      ->prepare('INSERT INTO `' . MYIF_LOG_TABLE . '` (log_ts,ip,influx,result) VALUES (now(), :ip, :influx, :result)')
+      ->execute( ['ip'=>@$_SERVER['REMOTE_ADDR'], 'influx'=>$influx, 'result'=>$result] );
+    }catch (\PDOException $e) {
+      if($e->errorInfo[1]==1146) {
+        //table does not exit
+        $this->db->query('CREATE TABLE `' . MYIF_LOG_TABLE . '` ( `log_ts` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, `ip` varchar(255) DEFAULT NULL, `influx` text, `result` varchar(255) DEFAULT NULL)');
+      }else{
+        throw $e;
+      }
+    }
+    if(rand(0,999)==0){ 
+      // 0.1% chance of getting executed
+      $this->db->query('DELETE FROM `' . MYIF_LOG_TABLE . '` WHERE log_ts < DATE_SUB(NOW(), INTERVAL ' . MYIF_LOG_DAYS . ' DAY)');
+    }
+  }
+  return $result;
+}
+
 }//class
+
