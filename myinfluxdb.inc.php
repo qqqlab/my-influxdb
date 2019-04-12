@@ -8,6 +8,10 @@ public  $fld; //array of fields and values
 private $ts;  //timestamp in unix format
 private $precision = 0; //number of seconds for rounding time stamps
 public $noupdate = false; //disable updates
+public $nocreate = false; //disable creating tables
+public $noaddtag = false; //disable adding tags
+public $noaddfield = false; //disable adding fields
+public $err; //last error message
 
 public function setTs($val) {
   if($this->precision) 
@@ -45,14 +49,14 @@ public function parse($influx) {
   $this->tag = [];
   for($i=1; $i<count($tbl_tag); $i++) {
     $keyval = preg_split('/=/',$tbl_tag[$i]);
-    if(count($keyval)!=2) die("ERROR parse2: invalid line '$influx'");
+    if(count($keyval)!=2) return("ERROR parse2: invalid line '$influx'");
     $this->tag[$keyval[0]] = $keyval[1];
   }
   $fld_parts = preg_split('/,/',$parts[1]);
   $this->fld = [];
   for($i=0; $i<count($fld_parts); $i++) {
     $keyval = preg_split('/=/',$fld_parts[$i]);
-    if(count($keyval)!=2) die("ERROR parse3: invalid line '$influx'");
+    if(count($keyval)!=2) return("ERROR parse3: invalid line '$influx'");
     $keyval[1] = preg_replace('/(^"|"$)/', '', $keyval[1]); //remove double quotes
     $this->fld[$keyval[0]] = $keyval[1];
   }
@@ -109,7 +113,7 @@ function getDbTblInfo() {
 
 function insert() {
   try{
-    if($this->ts===null) return 'ERROR insert: ts not set';
+    if($this->ts===null) return 'ts not set';
 
     $sql = 'INSERT INTO `' . $this->getDbTbl() . '`(ts';
     foreach($this->tag as $k=>$v) $sql .= ',`'.$this->esc($k).'`';
@@ -129,7 +133,7 @@ function insert() {
     case 1146: //table does not exit
       return "CREATE";
     default:
-      print_r($e);
+      $this->err = $e->getMessage(); 
       return "ERROR";
     }
   }
@@ -138,8 +142,8 @@ function insert() {
 
 function update() {
   try{
-    if($this->ts===null) return 'ERROR update: ts not set';
-    if($this->noupdate) return 'ERROR update: noupdate flag set';
+    if($this->ts===null) {$this->err = 'ts not set'; return 'ERROR';}
+    if($this->noupdate) {$this->err = 'update not allowed, noupdate flag is set'; return 'ERROR';}
 
     $sql = 'UPDATE `' . $this->getDbTbl() . '` SET ';
     $first=true;
@@ -154,50 +158,16 @@ function update() {
 
     $this->db_query($sql);
   }catch (\PDOException $e) {
-    print_r($e);
+    $this->err = $e->getMessage();
     return "ERROR";
   }
   return "OK";
 }
 
-/*not tested and not used
-function upsert() {
-  try{
-    if($this->ts===null) return 'ERROR insert: ts not set';
-
-    $sql = 'INSERT INTO `' . $this->getDbTbl() . '`(ts';
-    foreach($this->tag as $k=>$v) $sql .= ',`' . $this->esc($k) . '`';
-    foreach($this->fld as $k=>$v) $sql .= ',`' . $this->esc($k) . '`';
-    $sql .= ') VALUES (';
-    $sql .= 'from_unixtime('.$this->esc($this->ts).')';
-    foreach($this->tag as $k=>$v) $sql .= ',\'' . $this->esc($v) . '\'';
-    foreach($this->fld as $k=>$v) $sql .= ',\'' . $this->esc($v) . '\'';
-    $sql .= ')';
-    $sql .= ' ON DUPLICATE KEY';
-    $first=true;
-    foreach($this->fld as $k=>$v) {
-      $sql .= ($first?'':',') . '`' . $this->esc($k) . '`=\'' . $this->esc($v) . '\'';
-      $first=false;
-    }
-
-    $this->db_query($sql);
-  }catch (\PDOException $e) {
-    switch($e->errorInfo[1]) {
-    case 1054: //unknow column
-      return "ALTER";
-    case 1146: //table does not exit
-      return "CREATE";
-    default:
-      print_r($e);
-      return "ERROR";
-    }
-  }
-  return "OK";
-}
-*/
-
 function create() {
   try{
+    if($this->nocreate) {$this->err = 'create not allowed, nocreate flag is set'; return 'ERROR';}
+
     $sql = 'CREATE TABLE `' . $this->getDbTbl() . '`(ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP';
     foreach($this->tag as $k=>$v) $sql.=',`' . $this->esc($k) . '` VARCHAR(255) NOT NULL';
     foreach($this->fld as $k=>$v) $sql.=',`' . $this->esc($k) . '` ' . (is_numeric($v) ? 'FLOAT' : 'VARCHAR(255)') . ' NULL DEFAULT NULL';
@@ -208,7 +178,7 @@ function create() {
     $sql.=")";
     $this->db_query($sql);
   }catch (\PDOException $e) {
-    print_r($e);
+    $this->err = $e->getMessage();
     return "ERROR";
   }
   return "OK";
@@ -217,18 +187,26 @@ function create() {
 function alter() {
   //load db meta data
   $meta = $this->getDbTblInfo();
+  $err = '';
 
   //create fields
   foreach($this->fld as $k=>$v) if(!in_array($k,$meta['fld'])) {
-    $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD `' . $this->esc($k) . '` ' . (is_numeric($v) ? 'FLOAT' : 'VARCHAR(255)') . ' NULL DEFAULT NULL' );
+    if($this->noaddfield) 
+      $err = 'add field not allowed, noaddfield flag is set';
+    else
+      $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD `' . $this->esc($k) . '` ' . (is_numeric($v) ? 'FLOAT' : 'VARCHAR(255)') . ' NULL DEFAULT NULL' );
   }
 
   //create tags
   $created_tag = false;
   foreach($this->tag as $k=>$v) if(!in_array($k,$meta['tag'])) {
-    $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD `' . $this->esc($k) . '` VARCHAR(255) NOT NULL AFTER `' . $this->esc(end($meta['tag'])) . '`' );
-    $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD INDEX `' . $this->esc($k) . '` (`' . $this->esc($k) . '`)');
-    $created_tag = true;
+    if($this->noaddtag) {
+      $err .= ($err?', ':'') . 'add tag not allowed, noaddtag flag is set';
+    }else{
+      $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD `' . $this->esc($k) . '` VARCHAR(255) NOT NULL AFTER `' . $this->esc(end($meta['tag'])) . '`' );
+      $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD INDEX `' . $this->esc($k) . '` (`' . $this->esc($k) . '`)');
+      $created_tag = true;
+    }
   }
   if($created_tag) {
     $meta = $this->getDbTblInfo(); //reload db meta data from altered database
@@ -237,6 +215,7 @@ function alter() {
     $sql .= ') USING BTREE';
     $this->db_query($sql);
   }
+  if($err) {$this->err = $err; return "ERROR";}
   return "OK";
 }
 
@@ -252,47 +231,43 @@ function db_query($sql) {
 
 //write to db - create table / alter table / insert record / update record as required
 function write_no_log() {
-  switch($this->insert()) {
+  $op = 'insert';
+  $rv = $this->insert();
+  switch($rv) {
     case "OK":
-      return "OK insert";
-      break;
+      return "OK $op";
     case "CREATE":
-      switch($this->create()) {
-        case "OK":
-          if($this->insert()!="OK") return("ERROR insert2");
-          return "OK create insert";
-          break;
-        default:
-          return("ERROR create");
+      $op = 'create';
+      $rv = $this->create();
+      if($rv == 'OK') {
+        $op = 'create insert';
+        $rv = $this->insert();
+        if($rv=="OK") return("OK $op"); 
       }
       break;
     case "ALTER":
-      switch($this->alter()) {
-        case "OK":
-          switch($this->insert()) {
-            case "OK": 
-              return "OK alter insert";
-            case "UPDATE":
-              $rv = $this->update();
-              if($rv != "OK") return($rv);
-              return "OK alter update";
-            default: 
-              return("ERROR alter update");
-          }
-          break;
-        default:
-          return("ERROR alter");
+      $op = "alter";
+      $rv = $this->alter();
+      if($rv == 'OK') {
+        $op = 'alter insert';
+        $rv = $this->insert();
+        switch($this->insert()) {
+          case "OK": 
+            return "OK $op";
+          case "UPDATE":
+            $op = 'alter update';
+            $rv = $this->update();
+            if($rv=="OK") return("OK $op"); 
+        }
       }
       break;
     case "UPDATE":
+      $op = 'update';
       $rv = $this->update();
-      if($rv != "OK") return($rv);
-      return "OK update";
+      if($rv=="OK") return("OK $op");
       break;
-    default:
-      return("ERROR insert");
   }
-  return "ERROR unknown";
+  return "ERROR $op: $this->err";
 }
 
 function write($influx) {
@@ -333,6 +308,9 @@ function write_file($filename,$options) {
   if(isset($options['precision'])) $this->setPrecision($options['precision']);
   if(array_key_exists('verbose',$options)) $verbose = true;
   if(array_key_exists('noupdate',$options)) $this->noupdate = true;
+  if(array_key_exists('nocreate',$options)) $this->nocreate = true;
+  if(array_key_exists('noaddtag',$options)) $this->noaddtag = true;
+  if(array_key_exists('noaddfield',$options)) $this->noaddfield = true;
 
   if(!$f = @fopen($filename,'r')) return ("ERROR opening file $filename\n");
 

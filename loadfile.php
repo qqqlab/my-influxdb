@@ -9,6 +9,9 @@ if($argc<2) die("usage: loadfile.php [--option=value] ... <filename>
    --verbose              Verbose output
    --precision=<seconds>  Set precision
    --noupdate             Disable update, only inserts are allowed
+   --nocreate             Disable creating tables
+   --noaddtag             Disable adding tag columns
+   --noaddfield           Disable adding field columns
 ");
 
 $filename = $argv[$argc-1];
