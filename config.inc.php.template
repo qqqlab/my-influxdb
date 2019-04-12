@@ -5,10 +5,12 @@ define('DB_NAME', 'influxdata');
 define('DB_USER', 'root');
 define('DB_PASS', '<<password>>');
 
-//prefix influx tables - prevents myinfluxdb modifying non-influx tables
+//prefix data tables - prevents myinfluxdb from modifying non-influx tables
 define('MYIF_TABLE_PREFIX','i_');
 
+//prefix for system tables - prevents myinfluxdb from modifying non-influx tables
+define('MYIF_SYSTABLE_PREFIX','isys_');
+
 //logging
-define('MYIF_LOG_TABLE','log_influx_write'); //table name is used as-is without prefix
 define('MYIF_LOG_DAYS','30'); //number of days to keep in log - set to 0 to disable
  

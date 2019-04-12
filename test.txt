@@ -1,10 +1,10 @@
 #expected results when loading in non-existing table 'test'
 #create & insert
-test,gw=gw1,node=node1 rssi=-123,vcc=3400 1554903544
+test,gw=gw1,node=node1 rssi=-123,text=blabla1,textquoted="blabla2" 1554903544
 #update
-test,gw=gw1,node=node1 rssi=-456,vcc=9999 1554903544
-#alter & update
-test,gw=gw1,node=node1 rssi=-123,vcc=3400,vcc2=2500 1554903544
-#alter & insert
-test,newtag=blabla,gw=gw1,node=node1 rssi=-123,vcc=3400
+test,gw=gw1,node=node1 rssi=-456 1554903544
+#add fields & update
+test,gw=gw1,node=node1 rssi=-789,newnum=123.456,newtext="abc" 1554903544
+#add tag & insert
+test,newtag=tagvalue,gw=gw1,node=node1 rssi=-123,vcc=3400
 

@@ -5,35 +5,21 @@ else
   require_once('config.inc.php');
 require_once('myinfluxdb.inc.php');
 
-if($argc<2) die("usage: loadfile.php [-v] [-p=<precision>] <filename>\n   -v verbose\n");
+if($argc<2) die("usage: loadfile.php [--option=value] ... <filename>
+   --verbose              Verbose output
+   --precision=<seconds>  Set precision
+   --noupdate             Disable update, only inserts are allowed
+");
+
+$filename = $argv[$argc-1];
+$options = [];
+for($i=1;$i<$argc-1;$i++) {
+  $a = explode('=',$argv[$i]);
+  if(count($a)<2) $a[1] = null;
+  if(substr($a[0],0,2) == '--') $options[substr($a[0],2)] = $a[1];
+}
 
 $influx = new MyInfluxDB();
-
-$verbose = false;
-for($i=1;$i<$argc-1;$i++) {
-  $a = $argv[$i];
-  if($a == '-v') $verbose = true;
-  if(substr($a,0,3) == '-p=') $influx->setPrecision(substr($a,3));
-}
-//echo "precision=".$influx->getPrecision()."\n";
-
-if(!$f = fopen($argv[$argc-1], "r")) die("error opening file $argv[1]\n");
-
-
-//------------------------
 $influx->db_connect();
-
-while (($influxdata = fgets($f)) !== false) {
-   $influxdata = trim($influxdata);
-   if(!$influxdata) continue;
-   if(substr($influxdata,0,1)=='#') continue;
-   if($verbose) echo "$influxdata -> ";
-   try{
-     $rv=$influx->write($influxdata);
-     if($verbose) echo "$rv\n";
-   }catch(Exception $e){
-     print_r($e);
-   }
-}
-fclose($f);
+echo $influx->write_file($filename,$options);
 

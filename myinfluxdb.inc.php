@@ -7,6 +7,7 @@ public  $tag; //array of tags and values
 public  $fld; //array of fields and values
 private $ts;  //timestamp in unix format
 private $precision = 0; //number of seconds for rounding time stamps
+public $noupdate = false; //disable updates
 
 public function setTs($val) {
   if($this->precision) 
@@ -34,23 +35,25 @@ public function getPrecision() {
 //}
 
 //parse an influx line protocol string and return parsed object
+//TODO: handle embedded spaces and special chars in strings
 public function parse($influx) {
   $influx = trim($influx);
   $parts = preg_split('/\s+/',$influx);
-  if(count($parts)<2 || count($parts)>3) die("ERROR2 invalid line '$influx'");
+  if(count($parts)<2 || count($parts)>3) return("ERROR parse1: invalid line '$influx'");
   $tbl_tag = preg_split('/,/',$parts[0]);
   $this->tbl = $tbl_tag[0];
   $this->tag = [];
   for($i=1; $i<count($tbl_tag); $i++) {
     $keyval = preg_split('/=/',$tbl_tag[$i]);
-    if(count($keyval)!=2) die("ERROR3 invalid line '$influx'");
+    if(count($keyval)!=2) die("ERROR parse2: invalid line '$influx'");
     $this->tag[$keyval[0]] = $keyval[1];
   }
   $fld_parts = preg_split('/,/',$parts[1]);
   $this->fld = [];
   for($i=0; $i<count($fld_parts); $i++) {
     $keyval = preg_split('/=/',$fld_parts[$i]);
-    if(count($keyval)!=2) die("ERROR4 invalid line '$influx'");
+    if(count($keyval)!=2) die("ERROR parse3: invalid line '$influx'");
+    $keyval[1] = preg_replace('/(^"|"$)/', '', $keyval[1]); //remove double quotes
     $this->fld[$keyval[0]] = $keyval[1];
   }
   if(count($parts)==3){
@@ -58,7 +61,7 @@ public function parse($influx) {
   }else{
     $this->setTs(time());
   }
-  //print_r($this);
+  return "OK";
 }
 
 
@@ -70,7 +73,7 @@ function clear() {
 }
 
 //==========================================================
-// DATABASE
+// MYSQL SPECIFIC
 //==========================================================
 function db_connect() {
   $charset = 'utf8mb4';
@@ -93,67 +96,122 @@ function getDbTbl() {
 
 //get list of tags and fields from database
 function getDbTblInfo() {
-  $tag = [];
-  $fld = [];
-  $stm = $this->db->query('SELECT * FROM `' . $this->getDbTbl() .'` LIMIT 0');
-  for($i=0;$i<$stm->columnCount();$i++) {
-    $inf = $stm->getColumnMeta($i);
-    $type = $inf['native_type'];
-    $name = $inf['name'];
+  $rv = [];
+  $result = $this->db->query('SHOW COLUMNS FROM `' . $this->getDbTbl() .'`');
+  while($row = $result->fetch()){
+    $istag = ($row['Key'] == 'PRI');
+    $name = $row['Field'];
     if($name=='ts') continue;
-    if($type=='VAR_STRING') {
-      $tag[]=$name;
-    }else{
-      $fld[]=$name;
+    if($istag) $rv['tag'][]=$name; else $rv['fld'][]=$name;
+  }
+  return $rv;
+}
+
+function insert() {
+  try{
+    if($this->ts===null) return 'ERROR insert: ts not set';
+
+    $sql = 'INSERT INTO `' . $this->getDbTbl() . '`(ts';
+    foreach($this->tag as $k=>$v) $sql .= ',`'.$this->esc($k).'`';
+    foreach($this->fld as $k=>$v) $sql .= ',`'.$this->esc($k).'`';
+    $sql .= ') VALUES (';
+    $sql .= 'from_unixtime('.$this->esc($this->ts).')';
+    foreach($this->tag as $k=>$v) $sql .= ',\'' . $this->esc($v) . '\'';
+    foreach($this->fld as $k=>$v) $sql .= ',\'' . $this->esc($v) . '\'';
+    $sql .= ')';
+    $this->db_query($sql);
+  }catch (\PDOException $e) {
+    switch($e->errorInfo[1]) {
+    case 1054: //unknow column
+      return "ALTER";
+    case 1062: //duplicate key
+      return "UPDATE";
+    case 1146: //table does not exit
+      return "CREATE";
+    default:
+      print_r($e);
+      return "ERROR";
     }
-    //print_r($stm->getColumnMeta($i));
   }
-  return ['tag'=>$tag, 'fld'=>$fld];
+  return "OK";
 }
 
-//create insert sql from parsed influx
-function insert_sql() {
-  if($this->ts===null) return '';
+function update() {
+  try{
+    if($this->ts===null) return 'ERROR update: ts not set';
+    if($this->noupdate) return 'ERROR update: noupdate flag set';
 
-  $sql = 'INSERT INTO `' . $this->getDbTbl() . '`(ts';
-  foreach($this->tag as $k=>$v) $sql .= ',`'.$this->esc($k).'`';
-  foreach($this->fld as $k=>$v) $sql .= ',`'.$this->esc($k).'`';
-  $sql .= ') VALUES (';
-  $sql .= 'from_unixtime('.$this->esc($this->ts).')';
-  foreach($this->tag as $k=>$v) $sql .= ",'".$this->esc($v)."'";
-  foreach($this->fld as $k=>$v) $sql .= ','.$this->esc($v);
-  $sql.=')';
-  return $sql;
-}
+    $sql = 'UPDATE `' . $this->getDbTbl() . '` SET ';
+    $first=true;
+    foreach($this->fld as $k=>$v) {
+      $sql .= ($first?'':',') . '`' . $this->esc($k) . '`=\'' . $this->esc($v) . '\'';
+      $first=false;
+    }
+    $sql .= ' WHERE ts = ';
+    $sql .= 'from_unixtime('.$this->esc($this->ts).')';
+    foreach($this->tag as $k=>$v) $sql .= ' AND `' . $this->esc($k) . '`=\'' . $this->esc($v) . '\'';
+    $sql.=' LIMIT 1';
 
-//update record
-function update_sql() {
-  if($this->ts===null) return '';
-
-  $sql = 'UPDATE `' . $this->getDbTbl() . '` SET ';
-  $first=true;
-  foreach($this->fld as $k=>$v) {
-    $sql .= ($first?'':',') . '`' . $this->esc($k) . '`=' . $this->esc($v);
-    $first=false;
+    $this->db_query($sql);
+  }catch (\PDOException $e) {
+    print_r($e);
+    return "ERROR";
   }
-  $sql .= ' WHERE ts = ';
-  $sql .= 'from_unixtime('.$this->esc($this->ts).')';
-  foreach($this->tag as $k=>$v) $sql .= " AND `" . $this->esc($k) . "`='" . $this->esc($v) . "'";
-  $sql.=' LIMIT 1';
-  return $sql;
+  return "OK";
 }
 
+/*not tested and not used
+function upsert() {
+  try{
+    if($this->ts===null) return 'ERROR insert: ts not set';
 
-function create_sql() {
-  $sql = 'CREATE TABLE `' . $this->getDbTbl() . '`(ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP';
-  foreach($this->tag as $k=>$v) $sql.=",`".$this->esc($k)."` VARCHAR(255) NOT NULL";
-  foreach($this->fld as $k=>$v) $sql.=",`".$this->esc($k)."` FLOAT DEFAULT NULL";
-  $sql.=",PRIMARY KEY (ts"; 
-  foreach($this->tag as $k=>$v) $sql.=",`".$this->esc($k)."`";
-  $sql.=")";
-  foreach($this->tag as $k=>$v) $sql.=",KEY `".$this->esc($k)."`(`".$this->esc($k)."`)";
-  $sql.=")";
-  return $sql;
+    $sql = 'INSERT INTO `' . $this->getDbTbl() . '`(ts';
+    foreach($this->tag as $k=>$v) $sql .= ',`' . $this->esc($k) . '`';
+    foreach($this->fld as $k=>$v) $sql .= ',`' . $this->esc($k) . '`';
+    $sql .= ') VALUES (';
+    $sql .= 'from_unixtime('.$this->esc($this->ts).')';
+    foreach($this->tag as $k=>$v) $sql .= ',\'' . $this->esc($v) . '\'';
+    foreach($this->fld as $k=>$v) $sql .= ',\'' . $this->esc($v) . '\'';
+    $sql .= ')';
+    $sql .= ' ON DUPLICATE KEY';
+    $first=true;
+    foreach($this->fld as $k=>$v) {
+      $sql .= ($first?'':',') . '`' . $this->esc($k) . '`=\'' . $this->esc($v) . '\'';
+      $first=false;
+    }
+
+    $this->db_query($sql);
+  }catch (\PDOException $e) {
+    switch($e->errorInfo[1]) {
+    case 1054: //unknow column
+      return "ALTER";
+    case 1146: //table does not exit
+      return "CREATE";
+    default:
+      print_r($e);
+      return "ERROR";
+    }
+  }
+  return "OK";
+}
+*/
+
+function create() {
+  try{
+    $sql = 'CREATE TABLE `' . $this->getDbTbl() . '`(ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP';
+    foreach($this->tag as $k=>$v) $sql.=',`' . $this->esc($k) . '` VARCHAR(255) NOT NULL';
+    foreach($this->fld as $k=>$v) $sql.=',`' . $this->esc($k) . '` ' . (is_numeric($v) ? 'FLOAT' : 'VARCHAR(255)') . ' NULL DEFAULT NULL';
+    $sql.=",PRIMARY KEY (ts";
+    foreach($this->tag as $k=>$v) $sql.=",`".$this->esc($k)."`";
+    $sql.=")";
+    foreach($this->tag as $k=>$v) $sql.=",KEY `".$this->esc($k)."`(`".$this->esc($k)."`)";
+    $sql.=")";
+    $this->db_query($sql);
+  }catch (\PDOException $e) {
+    print_r($e);
+    return "ERROR";
+  }
+  return "OK";
 }
 
 function alter() {
@@ -162,7 +220,7 @@ function alter() {
 
   //create fields
   foreach($this->fld as $k=>$v) if(!in_array($k,$meta['fld'])) {
-    $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD `' . $this->esc($k) . '` FLOAT NULL DEFAULT NULL' );
+    $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD `' . $this->esc($k) . '` ' . (is_numeric($v) ? 'FLOAT' : 'VARCHAR(255)') . ' NULL DEFAULT NULL' );
   }
 
   //create tags
@@ -187,48 +245,10 @@ function db_query($sql) {
   return $this->db->query($sql);
 }
 
+
 //==========================================================
-// CRUD
+// WRITE
 //==========================================================
-
-function insert() {
-  try{
-    $this->db_query($this->insert_sql());
-  }catch (\PDOException $e) {
-    switch($e->errorInfo[1]) {
-    case 1054: //unknow column
-      return "ALTER";
-    case 1062: //duplicate key
-      return "UPDATE";
-    case 1146: //table does not exit
-      return "CREATE";
-    default:
-      print_r($e);
-      return "ERROR";
-    }
-  }
-  return "OK";
-}
-
-function update() {
-  try{
-    $this->db_query($this->update_sql());
-  }catch (\PDOException $e) {
-    print_r($e);  
-    return "ERROR";
-  }
-  return "OK";
-}
-
-function create() {
-  try{
-    $this->db_query($this->create_sql());
-  }catch (\PDOException $e) {
-    print_r($e);
-    return "ERROR";
-  }
-  return "OK";
-}
 
 //write to db - create table / alter table / insert record / update record as required
 function write_no_log() {
@@ -253,7 +273,8 @@ function write_no_log() {
             case "OK": 
               return "OK alter insert";
             case "UPDATE":
-              if($this->update()!="OK") return("ERROR update");
+              $rv = $this->update();
+              if($rv != "OK") return($rv);
               return "OK alter update";
             default: 
               return("ERROR alter update");
@@ -264,7 +285,8 @@ function write_no_log() {
       }
       break;
     case "UPDATE":
-      if($this->update()!="OK") return("ERROR update");
+      $rv = $this->update();
+      if($rv != "OK") return($rv);
       return "OK update";
       break;
     default:
@@ -276,26 +298,60 @@ function write_no_log() {
 function write($influx) {
   $this->parse($influx);
   $result = $this->write_no_log();
+  $this->log_write($influx,$result);
+  return $result;
+}
+
+function log_write($influx,$result) {
   if(MYIF_LOG_DAYS>0) {
+    $logtable = MYIF_SYSTABLE_PREFIX . 'log_write';
     try{
       $this->db
-      ->prepare('INSERT INTO `' . MYIF_LOG_TABLE . '` (log_ts,ip,influx,result) VALUES (now(), :ip, :influx, :result)')
+      ->prepare('INSERT INTO `' . $logtable . '` (log_ts,ip,influx,result) VALUES (now(), :ip, :influx, :result)')
       ->execute( ['ip'=>@$_SERVER['REMOTE_ADDR'], 'influx'=>$influx, 'result'=>$result] );
     }catch (\PDOException $e) {
       if($e->errorInfo[1]==1146) {
         //table does not exit
-        $this->db->query('CREATE TABLE `' . MYIF_LOG_TABLE . '` ( `log_ts` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, `ip` varchar(255) DEFAULT NULL, `influx` text, `result` varchar(255) DEFAULT NULL)');
+        //TODO: write first log entry
+        $this->db->query('CREATE TABLE `' . $logtable . '` ( `log_ts` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, `ip` varchar(255) DEFAULT NULL, `influx` text, `result` varchar(255) DEFAULT NULL)');
       }else{
         throw $e;
       }
     }
-    if(rand(0,999)==0){ 
+    if(rand(0,999)==0){
       // 0.1% chance of getting executed
-      $this->db->query('DELETE FROM `' . MYIF_LOG_TABLE . '` WHERE log_ts < DATE_SUB(NOW(), INTERVAL ' . MYIF_LOG_DAYS . ' DAY)');
+      if( pcntl_fork() <= 0 ) { 
+        // execute in child process, or in parent process if could not fork
+        $this->db->query('DELETE FROM `' . $logtable . '` WHERE log_ts < DATE_SUB(NOW(), INTERVAL ' . MYIF_LOG_DAYS . ' DAY)');
+      }
     }
   }
-  return $result;
 }
+
+function write_file($filename,$options) {
+  $verbose = false;
+  if(isset($options['precision'])) $this->setPrecision($options['precision']);
+  if(array_key_exists('verbose',$options)) $verbose = true;
+  if(array_key_exists('noupdate',$options)) $this->noupdate = true;
+
+  if(!$f = @fopen($filename,'r')) return ("ERROR opening file $filename\n");
+
+  while (($line = fgets($f)) !== false) {
+    $line = trim($line);
+    if(!$line) continue;
+    if(substr($line,0,1)=='#') continue;
+    if($verbose) echo "$line -> ";
+    try{
+      $rv = $this->write($line);
+      if($verbose) echo "$rv\n";
+    }catch(Exception $e){
+      print_r($e);
+    }
+  }
+  fclose($f);
+  return '';
+}
+
 
 }//class
 
