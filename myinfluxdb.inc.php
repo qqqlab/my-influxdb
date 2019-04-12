@@ -323,7 +323,7 @@ function write_file($filename,$options) {
       $rv = $this->write($line);
       if($verbose) echo "$rv\n";
     }catch(Exception $e){
-      print_r($e);
+      echo $e->getMessage().'\n';
     }
   }
   fclose($f);
