@@ -6,9 +6,10 @@ A full fledged time series database like InfluxDB is sometimes overkill, and for
 
 ## Getting Started
 - Copy ```config.inc.php.template``` to ```config.inc.php``` and modify it as required.
-- Execute ```php loadfile.php --verbose test.txt``` and look for newly created tables ```i_test``` and ```isys_log_write``` in your database.
-- Execute ```php loadfile.php``` without arguments to get a list of options.
-- Execute ```curl -i -XPOST 'http://localhost/my-influxdb/write.php?verbose' --data-binary @test.txt```
+- ```php loadfile.php --verbose test.txt``` and look for newly created tables ```i_test``` and ```isys_log``` in your database.
+- ```php loadfile.php``` without arguments to get a list of options.
+- ```curl -i -XPOST 'http://localhost/my-influxdb/write.php?verbose' --data-binary @test.txt```
+- ```curl -i -XPOST 'http://localhost/my-influxdb/write.php?verbose' --data-binary 'test,node=newnode rssi=-456'```
 
 ## Features
 - Tables, columns and indices are dynamically created as data arrives.

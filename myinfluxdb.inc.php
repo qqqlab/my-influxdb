@@ -3,7 +3,7 @@
 class MyInfluxDB {
 public  $db;  //PDO database object
 
-//set by parse()
+//the current dataset, set by parse() or external program
 public  $tbl; //tablename
 public  $tag; //array of tags and values
 public  $fld; //array of fields and values
@@ -18,7 +18,7 @@ public $err; //last error message
 
 public function setTs($val) {
   if($this->precision) 
-    $this->ts = intdiv($val, $this->precision) * $this->precision;
+    $this->ts = $val - $val % $this->precision;
   else
     $this->ts = (int)$val;
 }
@@ -34,73 +34,6 @@ public function setPrecision($val) {
 
 public function getPrecision() {
   return $this->precision;
-}
-
-//parse an influx line protocol string "table,tag1=val1,tag2=val2 field1=val3,field4=val4 timestamp" 
-//returns 0 on success
-public function parse($s) {
-  $s=trim($s);
-
-  //split influx string into array with: value,delim,value,delim,...
-  $p = []; //parts
-  $w = ''; //word
-  $q = false; //in qouted
-  $len = strlen($s);
-  $i = 0;
-  while($i<$len) {
-    $c = $s[$i];
-    $c1 = @$s[$i+1]; //next char or '' if no next char
-    if($q && $c=='"' && ($c1==','||$c1=='='||$c1==' ')) {
-      $q = false;
-    }else if(!$q && ($c==','||$c=='='||$c==' ')) {
-      $p[] = $w;
-      $p[] = $c;
-      $w = '';
-      if($c1=='"') { $q=true; $i++;} //skip quote
-    }else{
-      if($c=='\\') {
-        $w .= $c1;
-        $i++;
-      }else{
-        $w .= $c;
-      }
-    }
-    $i++;
-  }
-  $p[] = $w;
-
-  //sort $p into tbl,tags,fields, and ts
-  $cnt = count($p);
-  if($cnt < 5) return 1; //minimum 5 parts: "tbl fld=val"
-  $this->tbl = $p[0];
-  $this->tag = [];
-  $this->fld = [];
-  $this->ts = null;
-  $i = 1;
-  while($p[$i]==','){
-    if($i+4 > $cnt) return 2;
-    if($p[$i+2] != '=') return 3;
-    $this->tag[$p[$i+1]] = $p[$i+3];
-    $i+=4;
-  }
-  if($i+4 > $cnt) return 5;
-  if($p[$i]!=' ') return 6;
-  if($p[$i+2] != '=') return 7;
-  $this->fld[$p[$i+1]] = $p[$i+3];
-  $i+=4;
-  while($i < $cnt && $p[$i]==','){
-    if($i+4 > $cnt) return 8;
-    if($p[$i+2] != '=') return 9;
-    $this->fld[$p[$i+1]] = $p[$i+3];
-    $i+=4;
-  }
-  if($i+1 < $cnt) {
-    if($p[$i] != ' ') return 10;
-    $this->setTs($p[$i+1]);
-  }else{
-    $this->setTs(time());
-  }
-  return 0;
 }
 
 public function clear() {
@@ -265,7 +198,7 @@ private function db_query($sql) {
 //==========================================================
 
 //write to db - create table / alter table / insert record / update record as required
-private function write_no_log() {
+public function write() {
   $op = 'insert';
   $rv = $this->insert();
   switch($rv) {
@@ -305,29 +238,23 @@ private function write_no_log() {
   return "ERROR $op: $this->err";
 }
 
-public function write($influx) {
-  $rv = $this->parse($influx);
-  if($rv != 0) {
-    $result = "ERROR parse $rv";
-  }else{
-    $result = $this->write_no_log();
-  }
-  $this->log_write($influx,$result);
-  return $result;
-}
-
-private function log_write($influx,$result) {
+//logging
+public function log($msg,$result) {
   if(MYIF_LOG_DAYS>0) {
-    $logtable = MYIF_SYSTABLE_PREFIX . 'log_write';
+    $logtable = MYIF_SYSTABLE_PREFIX . 'log';
     try{
       $this->db
-      ->prepare('INSERT INTO `' . $logtable . '` (log_ts,ip,influx,result) VALUES (now(), :ip, :influx, :result)')
-      ->execute( ['ip'=>@$_SERVER['REMOTE_ADDR'], 'influx'=>$influx, 'result'=>$result] );
+      ->prepare('INSERT INTO `' . $logtable . '` (log_ts,ip,msg,result) VALUES (now(), :ip, :msg, :result)')
+      ->execute( ['ip'=>@$_SERVER['REMOTE_ADDR'], 'msg'=>$msg, 'result'=>$result] );
     }catch (\PDOException $e) {
-      if($e->errorInfo[1]==1146) {
-        //table does not exit
-        //TODO: write first log entry
-        $this->db->query('CREATE TABLE `' . $logtable . '` ( `log_ts` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, `ip` varchar(255) DEFAULT NULL, `influx` text, `result` varchar(255) DEFAULT NULL)');
+      if($e->errorInfo[1]==1146) { //table does not exit
+        //create table
+        $this->db->query('CREATE TABLE `' . $logtable . '` ( `log_ts` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, `ip` varchar(255) DEFAULT NULL, `msg` text, `result` varchar(255) DEFAULT NULL)');
+        //write log
+        $this->db 
+        ->prepare('INSERT INTO `' . $logtable . '` (log_ts,ip,msg,result) VALUES (now(), :ip, :msg, :result)')
+        ->execute( ['ip'=>@$_SERVER['REMOTE_ADDR'], 'msg'=>$msg, 'result'=>$result] );
+
       }else{
         throw $e;
       }
@@ -342,19 +269,99 @@ private function log_write($influx,$result) {
   }
 }
 
+
+//==========================================================
+// WRITE INFLUX PROTOCOL DATA
+//==========================================================
+
+//parse an influx line protocol string "table,tag1=val1,tag2=val2 field1=val3,field4=val4 timestamp"
+//returns 0 on success
+public function parse($s) {
+  $s=trim($s);
+
+  //split influx string into array with: value,delim,value,delim,...
+  $p = []; //parts
+  $w = ''; //word
+  $q = false; //in qouted
+  $len = strlen($s);
+  $i = 0;
+  while($i<$len) {
+    $c = $s[$i];
+    $c1 = @$s[$i+1]; //next char or '' if no next char
+    if($q && $c=='"' && ($c1==','||$c1=='='||$c1==' ')) {
+      $q = false;
+    }else if(!$q && ($c==','||$c=='='||$c==' ')) {
+      $p[] = $w;
+      $p[] = $c;
+      $w = '';
+      if($c1=='"') { $q=true; $i++;} //skip quote
+    }else{
+      if($c=='\\') {
+        $w .= $c1;
+        $i++;
+      }else{
+        $w .= $c;
+      }
+    }
+    $i++;
+  }
+  $p[] = $w;
+
+  //sort $p into tbl,tags,fields, and ts
+  $cnt = count($p);
+  if($cnt < 5) return 1; //minimum 5 parts: "tbl fld=val"
+  $this->tbl = $p[0];
+  $this->tag = [];
+  $this->fld = [];
+  $this->ts = null;
+  $i = 1;
+  while($p[$i]==','){
+    if($i+4 > $cnt) return 2;
+    if($p[$i+2] != '=') return 3;
+    $this->tag[$p[$i+1]] = $p[$i+3];
+    $i+=4;
+  }
+  if($i+4 > $cnt) return 5;
+  if($p[$i]!=' ') return 6;
+  if($p[$i+2] != '=') return 7;
+  $this->fld[$p[$i+1]] = $p[$i+3];
+  $i+=4;
+  while($i < $cnt && $p[$i]==','){
+    if($i+4 > $cnt) return 8;
+    if($p[$i+2] != '=') return 9;
+    $this->fld[$p[$i+1]] = $p[$i+3];
+    $i+=4;
+  }
+  if($i+1 < $cnt) {
+    if($p[$i] != ' ') return 10;
+    $this->setTs($p[$i+1]);
+  }else{
+    $this->setTs(time());
+  }
+  return 0;
+}
+
+//write single influx line to database
 public function write_line($line,$verbose) {
   $line = trim($line);
   if(!$line) return;
   if(substr($line,0,1)=='#') return;
   if($verbose) echo "$line -> ";
   try{
-    $rv = $this->write($line);
-    if($verbose) echo "$rv\n";
+    $parse_result = $this->parse($line);
+    if($parse_result != 0) {
+      $result = "ERROR parse $parse_result";
+    }else{
+      $result = $this->write();
+    }
+    $this->log($line,$result);
+    if($verbose) echo "$result\n";
   }catch(Exception $e){
     echo $e->getMessage().'\n';
   }
 }
 
+//write file with influx records to database
 public function write_file($filename,$options) {
   $verbose = false;
   if(isset($options['precision'])) $this->setPrecision($options['precision']);
