@@ -23,8 +23,7 @@ A full fledged time series database like InfluxDB is sometimes overkill, and for
 - Optional logging of write requests, ip address, and result to a database table, and automatic deletion of stale log entries. 
 
 ## Hints/Gotchas
-- The Influx Line Protocol parser does not support spaces in strings (not even in quoted strings).
-- The Influx Line Protocol parser creates a numeric column when sending an initial quoted numeric value.
+- A numeric column when sending an initial quoted numeric value. (workaround: manually change the column to text.)
 - Keep the number of tags low, the tag indexes quickly use a lot of disk space. 
 
 ## Not Implemented

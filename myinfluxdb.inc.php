@@ -2,10 +2,13 @@
 
 class MyInfluxDB {
 public  $db;  //PDO database object
+
+//set by parse()
 public  $tbl; //tablename
 public  $tag; //array of tags and values
 public  $fld; //array of fields and values
 private $ts;  //timestamp in unix format
+
 private $precision = 0; //number of seconds for rounding time stamps
 public $noupdate = false; //disable updates
 public $nocreate = false; //disable creating tables
@@ -33,43 +36,74 @@ public function getPrecision() {
   return $this->precision;
 }
 
+//parse an influx line protocol string "table,tag1=val1,tag2=val2 field1=val3,field4=val4 timestamp" 
+//returns 0 on success
+public function parse($s) {
+  $s=trim($s);
 
-//public function __construct($db) {
-//  $this->db = $db;
-//}
+  //split influx string into array with: value,delim,value,delim,...
+  $p = []; //parts
+  $w = ''; //word
+  $q = false; //in qouted
+  $len = strlen($s);
+  $i = 0;
+  while($i<$len) {
+    $c = $s[$i];
+    $c1 = @$s[$i+1]; //next char or '' if no next char
+    if($q && $c=='"' && ($c1==','||$c1=='='||$c1==' ')) {
+      $q = false;
+    }else if(!$q && ($c==','||$c=='='||$c==' ')) {
+      $p[] = $w;
+      $p[] = $c;
+      $w = '';
+      if($c1=='"') { $q=true; $i++;} //skip quote
+    }else{
+      if($c=='\\') {
+        $w .= $c1;
+        $i++;
+      }else{
+        $w .= $c;
+      }
+    }
+    $i++;
+  }
+  $p[] = $w;
 
-//parse an influx line protocol string and return parsed object
-//TODO: handle embedded spaces and special chars in strings
-public function parse($influx) {
-  $influx = trim($influx);
-  $parts = preg_split('/\s+/',$influx);
-  if(count($parts)<2 || count($parts)>3) return("ERROR parse1: invalid line '$influx'");
-  $tbl_tag = preg_split('/,/',$parts[0]);
-  $this->tbl = $tbl_tag[0];
+  //sort $p into tbl,tags,fields, and ts
+  $cnt = count($p);
+  if($cnt < 5) return 1; //minimum 5 parts: "tbl fld=val"
+  $this->tbl = $p[0];
   $this->tag = [];
-  for($i=1; $i<count($tbl_tag); $i++) {
-    $keyval = preg_split('/=/',$tbl_tag[$i]);
-    if(count($keyval)!=2) return("ERROR parse2: invalid line '$influx'");
-    $this->tag[$keyval[0]] = $keyval[1];
-  }
-  $fld_parts = preg_split('/,/',$parts[1]);
   $this->fld = [];
-  for($i=0; $i<count($fld_parts); $i++) {
-    $keyval = preg_split('/=/',$fld_parts[$i]);
-    if(count($keyval)!=2) return("ERROR parse3: invalid line '$influx'");
-    $keyval[1] = preg_replace('/(^"|"$)/', '', $keyval[1]); //remove double quotes
-    $this->fld[$keyval[0]] = $keyval[1];
+  $this->ts = null;
+  $i = 1;
+  while($p[$i]==','){
+    if($i+4 > $cnt) return 2;
+    if($p[$i+2] != '=') return 3;
+    $this->tag[$p[$i+1]] = $p[$i+3];
+    $i+=4;
   }
-  if(count($parts)==3){
-    $this->setTs($parts[2]);
+  if($i+4 > $cnt) return 5;
+  if($p[$i]!=' ') return 6;
+  if($p[$i+2] != '=') return 7;
+  $this->fld[$p[$i+1]] = $p[$i+3];
+  $i+=4;
+  while($i < $cnt && $p[$i]==','){
+    if($i+4 > $cnt) return 8;
+    if($p[$i+2] != '=') return 9;
+    $this->fld[$p[$i+1]] = $p[$i+3];
+    $i+=4;
+  }
+  if($i+1 < $cnt) {
+    if($p[$i] != ' ') return 10;
+    $this->setTs($p[$i+1]);
   }else{
     $this->setTs(time());
   }
-  return "OK";
+  return 0;
 }
 
-
-function clear() {
+public function clear() {
   $this->tbl = null;
   $this->tag = [];
   $this->fld = [];
@@ -79,7 +113,7 @@ function clear() {
 //==========================================================
 // MYSQL SPECIFIC
 //==========================================================
-function db_connect() {
+public function db_connect() {
   $charset = 'utf8mb4';
   $dsn = "mysql:host=".DB_HOST.";dbname=".DB_NAME.";charset=$charset";
   $options = [
@@ -90,16 +124,16 @@ function db_connect() {
   $this->db = new PDO($dsn, DB_USER, DB_PASS, $options);
 }
 
-function esc($v) {
+private function esc($v) {
   return substr($this->db->quote($v), 1, -1);
 }
 
-function getDbTbl() {
+public function getDbTbl() {
   return MYIF_TABLE_PREFIX . $this->esc($this->tbl);
 }
 
 //get list of tags and fields from database
-function getDbTblInfo() {
+private function getDbTblInfo() {
   $rv = [];
   $result = $this->db->query('SHOW COLUMNS FROM `' . $this->getDbTbl() .'`');
   while($row = $result->fetch()){
@@ -111,7 +145,7 @@ function getDbTblInfo() {
   return $rv;
 }
 
-function insert() {
+private function insert() {
   try{
     if($this->ts===null) return 'ts not set';
 
@@ -126,21 +160,21 @@ function insert() {
     $this->db_query($sql);
   }catch (\PDOException $e) {
     switch($e->errorInfo[1]) {
-    case 1054: //unknow column
-      return "ALTER";
-    case 1062: //duplicate key
-      return "UPDATE";
-    case 1146: //table does not exit
-      return "CREATE";
-    default:
-      $this->err = $e->getMessage(); 
-      return "ERROR";
+      case 1054: //unknow column
+        return "ALTER";
+      case 1062: //duplicate key
+        return "UPDATE";
+      case 1146: //table does not exit
+        return "CREATE";
+      default:
+        $this->err = $e->getMessage(); 
+        return "ERROR";
     }
   }
   return "OK";
 }
 
-function update() {
+private function update() {
   try{
     if($this->ts===null) {$this->err = 'ts not set'; return 'ERROR';}
     if($this->noupdate) {$this->err = 'update not allowed, noupdate flag is set'; return 'ERROR';}
@@ -164,7 +198,7 @@ function update() {
   return "OK";
 }
 
-function create() {
+private function create() {
   try{
     if($this->nocreate) {$this->err = 'create not allowed, nocreate flag is set'; return 'ERROR';}
 
@@ -184,34 +218,35 @@ function create() {
   return "OK";
 }
 
-function alter() {
+private function alter() {
   //load db meta data
   $meta = $this->getDbTblInfo();
   $err = '';
 
-  //create fields
-  foreach($this->fld as $k=>$v) if(!in_array($k,$meta['fld'])) {
+  //create fields (do not create field if column already exists as tag)
+  foreach($this->fld as $k=>$v) if(!in_array($k,$meta['fld']) && !in_array($k,$meta['tag'])) {
     if($this->noaddfield) 
       $err = 'add field not allowed, noaddfield flag is set';
     else
       $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD `' . $this->esc($k) . '` ' . (is_numeric($v) ? 'FLOAT' : 'VARCHAR(255)') . ' NULL DEFAULT NULL' );
   }
 
-  //create tags
-  $created_tag = false;
-  foreach($this->tag as $k=>$v) if(!in_array($k,$meta['tag'])) {
+  //create tags (do not create tag if column already exists as field)
+  $created_tags = [];
+  foreach($this->tag as $k=>$v) if(!in_array($k,$meta['tag']) && !in_array($k,$meta['fld'])) {
     if($this->noaddtag) {
       $err .= ($err?', ':'') . 'add tag not allowed, noaddtag flag is set';
     }else{
       $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD `' . $this->esc($k) . '` VARCHAR(255) NOT NULL AFTER `' . $this->esc(end($meta['tag'])) . '`' );
       $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD INDEX `' . $this->esc($k) . '` (`' . $this->esc($k) . '`)');
-      $created_tag = true;
+      $created_tags[] = $k;
     }
   }
-  if($created_tag) {
-    $meta = $this->getDbTblInfo(); //reload db meta data from altered database
+  if($created_tags) {
+    //set primary key to include new tag(s)
     $sql = 'ALTER TABLE `' . $this->getDbTbl() . '` DROP PRIMARY KEY, ADD PRIMARY KEY (`ts`';
-    foreach($meta['tag'] as $tag) $sql .= ',`' . $this->esc($tag) . '`';
+    foreach($meta['tag'] as $tag)  $sql .= ',`' . $this->esc($tag) . '`'; //current tags
+    foreach($created_tags as $tag) $sql .= ',`' . $this->esc($tag) . '`'; //new tags
     $sql .= ') USING BTREE';
     $this->db_query($sql);
   }
@@ -219,7 +254,7 @@ function alter() {
   return "OK";
 }
 
-function db_query($sql) {
+private function db_query($sql) {
   //echo "$sql\n";
   return $this->db->query($sql);
 }
@@ -230,7 +265,7 @@ function db_query($sql) {
 //==========================================================
 
 //write to db - create table / alter table / insert record / update record as required
-function write_no_log() {
+private function write_no_log() {
   $op = 'insert';
   $rv = $this->insert();
   switch($rv) {
@@ -270,14 +305,18 @@ function write_no_log() {
   return "ERROR $op: $this->err";
 }
 
-function write($influx) {
-  $this->parse($influx);
-  $result = $this->write_no_log();
+public function write($influx) {
+  $rv = $this->parse($influx);
+  if($rv != 0) {
+    $result = "ERROR parse $rv";
+  }else{
+    $result = $this->write_no_log();
+  }
   $this->log_write($influx,$result);
   return $result;
 }
 
-function log_write($influx,$result) {
+private function log_write($influx,$result) {
   if(MYIF_LOG_DAYS>0) {
     $logtable = MYIF_SYSTABLE_PREFIX . 'log_write';
     try{
@@ -303,7 +342,20 @@ function log_write($influx,$result) {
   }
 }
 
-function write_file($filename,$options) {
+public function write_line($line,$verbose) {
+  $line = trim($line);
+  if(!$line) return;
+  if(substr($line,0,1)=='#') return;
+  if($verbose) echo "$line -> ";
+  try{
+    $rv = $this->write($line);
+    if($verbose) echo "$rv\n";
+  }catch(Exception $e){
+    echo $e->getMessage().'\n';
+  }
+}
+
+public function write_file($filename,$options) {
   $verbose = false;
   if(isset($options['precision'])) $this->setPrecision($options['precision']);
   if(array_key_exists('verbose',$options)) $verbose = true;
@@ -312,20 +364,11 @@ function write_file($filename,$options) {
   if(array_key_exists('noaddtag',$options)) $this->noaddtag = true;
   if(array_key_exists('noaddfield',$options)) $this->noaddfield = true;
 
+  if(isset($options['data'])) $this->write_line($options['data'],$verbose);
+
   if(!$f = @fopen($filename,'r')) return ("ERROR opening file $filename\n");
 
-  while (($line = fgets($f)) !== false) {
-    $line = trim($line);
-    if(!$line) continue;
-    if(substr($line,0,1)=='#') continue;
-    if($verbose) echo "$line -> ";
-    try{
-      $rv = $this->write($line);
-      if($verbose) echo "$rv\n";
-    }catch(Exception $e){
-      echo $e->getMessage().'\n';
-    }
-  }
+  while (($line = fgets($f)) !== false) $this->write_line($line,$verbose);
   fclose($f);
   return '';
 }

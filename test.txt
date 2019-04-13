@@ -7,4 +7,7 @@ test,gw=gw1,node=node1 rssi=-456 1554903544
 test,gw=gw1,node=node1 rssi=-789,newnum=123.456,newtext="abc" 1554903544
 #add tag & insert
 test,newtag=tagvalue,gw=gw1,node=node1 rssi=-123,vcc=3400
-
+#quotes and escapes
+test,newtag=tagvalue,gw=gw1,node=node1 text=bla\,bla,textquoted="bla,\"\\\"bla2",vcc=9990
+#invalid line
+test,newtag=tagvalue,gw=gw1,INVALID rssi=-123,vcc=3400

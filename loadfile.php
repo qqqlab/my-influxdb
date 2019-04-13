@@ -17,7 +17,7 @@ if($argc<2) die("usage: loadfile.php [--option=value] ... <filename>
 $filename = $argv[$argc-1];
 $options = [];
 for($i=1;$i<$argc-1;$i++) {
-  $a = explode('=',$argv[$i]);
+  $a = explode('=',$argv[$i],2);
   if(count($a)<2) $a[1] = null;
   if(substr($a[0],0,2) == '--') $options[substr($a[0],2)] = $a[1];
 }
