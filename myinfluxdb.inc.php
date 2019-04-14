@@ -53,6 +53,7 @@ public function db_connect() {
     PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     PDO::ATTR_EMULATE_PREPARES   => false,
+    PDO::ATTR_PERSISTENT         => true,
   ];
   $this->db = new PDO($dsn, DB_USER, DB_PASS, $options);
 }
@@ -238,7 +239,11 @@ public function write() {
   return "ERROR $op: $this->err";
 }
 
-//logging
+
+//==========================================================
+// LOGGING
+//==========================================================
+
 public function log($msg,$result) {
   if(MYIF_LOG_DAYS>0) {
     $logtable = MYIF_SYSTABLE_PREFIX . 'log';
@@ -254,17 +259,18 @@ public function log($msg,$result) {
         $this->db 
         ->prepare('INSERT INTO `' . $logtable . '` (log_ts,ip,msg,result) VALUES (now(), :ip, :msg, :result)')
         ->execute( ['ip'=>@$_SERVER['REMOTE_ADDR'], 'msg'=>$msg, 'result'=>$result] );
-
       }else{
         throw $e;
       }
     }
     if(rand(0,999)==0){
       // 0.1% chance of getting executed
-      if( pcntl_fork() <= 0 ) { 
-        // execute in child process, or in parent process if could not fork
-        $this->db->query('DELETE FROM `' . $logtable . '` WHERE log_ts < DATE_SUB(NOW(), INTERVAL ' . MYIF_LOG_DAYS . ' DAY)');
-      }
+      //truncate log
+      $this->db->query('DELETE FROM `' . $logtable . '` WHERE log_ts < DATE_SUB(NOW(), INTERVAL ' . MYIF_LOG_DAYS . ' DAY)');
+      //write log
+      $this->db
+      ->prepare('INSERT INTO `' . $logtable . '` (log_ts,ip,msg,result) VALUES (now(), :ip, :msg, :result)')
+      ->execute( ['ip'=>@$_SERVER['REMOTE_ADDR'], 'msg'=>'log truncated', 'result'=>'OK'] );
     }
   }
 }
