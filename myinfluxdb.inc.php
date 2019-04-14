@@ -53,7 +53,7 @@ public function db_connect() {
     PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     PDO::ATTR_EMULATE_PREPARES   => false,
-    PDO::ATTR_PERSISTENT         => true,
+    PDO::ATTR_PERSISTENT         => false, //set to false otherwise "MySQL server has gone away" errors with pcntl_fork()
   ];
   $this->db = new PDO($dsn, DB_USER, DB_PASS, $options);
 }
@@ -246,33 +246,57 @@ public function write() {
 
 public function log($msg,$result) {
   if(MYIF_LOG_DAYS>0) {
-    $logtable = MYIF_SYSTABLE_PREFIX . 'log';
-    try{
-      $this->db
-      ->prepare('INSERT INTO `' . $logtable . '` (log_ts,ip,msg,result) VALUES (now(), :ip, :msg, :result)')
-      ->execute( ['ip'=>@$_SERVER['REMOTE_ADDR'], 'msg'=>$msg, 'result'=>$result] );
-    }catch (\PDOException $e) {
-      if($e->errorInfo[1]==1146) { //table does not exit
-        //create table
-        $this->db->query('CREATE TABLE `' . $logtable . '` ( `log_ts` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, `ip` varchar(255) DEFAULT NULL, `msg` text, `result` varchar(255) DEFAULT NULL)');
-        //write log
-        $this->db 
-        ->prepare('INSERT INTO `' . $logtable . '` (log_ts,ip,msg,result) VALUES (now(), :ip, :msg, :result)')
-        ->execute( ['ip'=>@$_SERVER['REMOTE_ADDR'], 'msg'=>$msg, 'result'=>$result] );
-      }else{
-        throw $e;
-      }
+    if(!$this->log_insert($msg,$result)){
+      $this->log_create();
+      $this->log_insert($msg,$result);
     }
     if(rand(0,999)==0){
       // 0.1% chance of getting executed
-      //truncate log
-      $this->db->query('DELETE FROM `' . $logtable . '` WHERE log_ts < DATE_SUB(NOW(), INTERVAL ' . MYIF_LOG_DAYS . ' DAY)');
-      //write log
-      $this->db
-      ->prepare('INSERT INTO `' . $logtable . '` (log_ts,ip,msg,result) VALUES (now(), :ip, :msg, :result)')
-      ->execute( ['ip'=>@$_SERVER['REMOTE_ADDR'], 'msg'=>'log truncated', 'result'=>'OK'] );
+      if(! is_callable('pcntl_fork')) {
+        $this->log_truncate();
+        $this->log_insert('log truncated','LOG');
+      }else{
+        //start a new process to do the truncate (async queries not allowed with pdo, can do with mysqli?)
+        switch(pcntl_fork()) {
+          case -1: //could not fork
+            $this->log_truncate();
+            $this->log_insert('log truncated','LOG');
+            break;
+          case 0; //child
+            $this->db_connect(); //reconnect both child and parent - otherwise "MySQL server has gone away" error
+            $this->log_truncate();
+            $this->log_insert('log truncated','LOG');
+            exit();
+            break;
+          default: //parent
+            $this->db_connect(); //reconnect both child and parent - otherwise "MySQL server has gone away" error
+        }
+      } 
     }
   }
+}
+
+private function log_insert($msg, $result) {
+  try{
+    $this->db
+    ->prepare('INSERT INTO `' . MYIF_SYSTABLE_PREFIX . 'log` (log_ts,ip,msg,result) VALUES (now(), :ip, :msg, :result)')
+    ->execute( ['ip'=>@$_SERVER['REMOTE_ADDR'], 'msg'=>$msg, 'result'=>$result] );
+  }catch (\PDOException $e) {
+    if($e->errorInfo[1]==1146) { //table does not exit
+      return false;
+    }else{
+      throw $e;
+    }
+  }
+  return true;
+}
+
+private function log_create() {
+  $this->db->query('CREATE TABLE `' . MYIF_SYSTABLE_PREFIX . 'log` ( `log_ts` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, `ip` varchar(255) DEFAULT NULL, `msg` text, `result` varchar(255) DEFAULT NULL)');
+}
+
+private function log_truncate() {
+   $this->db->query('DELETE FROM `' . MYIF_SYSTABLE_PREFIX . 'log` WHERE log_ts < DATE_SUB(NOW(), INTERVAL ' . MYIF_LOG_DAYS . ' DAY)');
 }
 
 
