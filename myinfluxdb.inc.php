@@ -245,7 +245,7 @@ public function write() {
 //==========================================================
 
 public function log($msg,$result) {
-  if(MYIF_LOG_DAYS>0) {
+  if(MYIF_LOG_ROWS>0) {
     if(!$this->log_insert($msg,$result)){
       $this->log_create();
       $this->log_insert($msg,$result);
@@ -296,7 +296,8 @@ private function log_create() {
 }
 
 private function log_truncate() {
-   $this->db->query('DELETE FROM `' . MYIF_SYSTABLE_PREFIX . 'log` WHERE log_ts < DATE_SUB(NOW(), INTERVAL ' . MYIF_LOG_DAYS . ' DAY)');
+   $delrows = $this->db->query('SELECT count(*) FROM `' . MYIF_SYSTABLE_PREFIX . 'log`')->fetchColumn() - MYIF_LOG_ROWS;
+   if($delrows > 0) $this->db->query('DELETE FROM `' . MYIF_SYSTABLE_PREFIX . 'log` ORDER BY log_ts LIMIT ' . $delrows);
 }
 
 

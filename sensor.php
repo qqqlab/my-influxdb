@@ -1,13 +1,15 @@
 <?php
-/*=======================================================
-HTTP endpoint for receiving raw sensor data
-=======================================================*/
-//config
+//=======================================================
+// HTTP endpoint for receiving raw sensor data
+//=======================================================
+//CONFIG
 define('PRECISION', 60);
 //=======================================================
 
-
-require_once('config.inc.php');
+if(file_exists(__DIR__.'/conf/config.inc.php'))
+  require_once('conf/config.inc.php');
+else
+  require_once('config.inc.php');
 require_once('myinfluxdb.inc.php');
 
 //$json = '{"tbl":"test_sensor","gw":"aap","rssi":-12,"m":"c29pbDFtNTg2djI1OTAsMTkzMGM3MTA2NTJ1NzEwNjUydDMwODswMDAwMDAwMDA="}';

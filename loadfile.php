@@ -1,6 +1,6 @@
 <?php
-if(file_exists(__DIR__.'/configcli.inc.php')) 
-  require_once('configcli.inc.php');
+if(file_exists(__DIR__.'/conf/config.inc.php')) 
+  require_once('conf/config.inc.php');
 else
   require_once('config.inc.php');
 require_once('myinfluxdb.inc.php');
