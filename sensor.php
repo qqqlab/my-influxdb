@@ -6,10 +6,7 @@
 define('PRECISION', 60);
 //=======================================================
 
-if(file_exists(__DIR__.'/conf/config.inc.php'))
-  require_once('conf/config.inc.php');
-else
-  require_once('config.inc.php');
+require_once('config.inc.php');
 require_once('myinfluxdb.inc.php');
 
 //$json = '{"tbl":"test_sensor","gw":"aap","rssi":-12,"m":"c29pbDFtNTg2djI1OTAsMTkzMGM3MTA2NTJ1NzEwNjUydDMwODswMDAwMDAwMDA="}';

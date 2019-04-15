@@ -1,5 +1,8 @@
 <?php
+//load relocated config file instead of this one - next line can be removed
+if(file_exists(__DIR__.'/../config.inc.php')) {require_once('../config.inc.php'); return;}
 
+//database
 define('DB_HOST', 'localhost');
 define('DB_NAME', 'influxdata');
 define('DB_USER', 'root');
