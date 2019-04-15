@@ -45,8 +45,8 @@ Get the best of both worlds: dynamic data storage properties of a dedicated time
 - MySQL >= 5.5 (for 5.5 set option innodb_file_per_table, >=5.6 also offers microsecond timestamps)
 
 ## Benchmarks
-Benchmark write endpoint (single threaded http client -> dockerized vserver with 2G memory)
-runtime multi: 1000 rec in 4.23 sec = 236 rec/sec
+Benchmark write endpoint (single threaded http client -> dockerized vserver with 2G memory) 
+runtime multi: 1000 rec in 4.23 sec = 236 rec/sec 
 runtime single: 1000 rec in 11.67 sec = 85 rec/sec
 
 ## Not Implemented
