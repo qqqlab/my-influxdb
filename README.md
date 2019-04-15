@@ -8,10 +8,11 @@ This project uses MySQL/MariaDB to store time series data.
 
 Get the best of both worlds: the dynamic data storage properties of a dedicated time series database, and the full power of a SQL database. (For example, InfluxDB 1.7 has limited support for update queries and delete queries, and table joins are completely missing.) 
 
-## Getting Started
-- Create an empty MySQL database.
-- Set your database credentials in ```config.inc.php```
-- ```php loadfile.php --verbose test.txt``` and look for newly created tables ```i_test``` and ```isys_log``` in your database.
+## Getting Started 1-2-3
+1. Create an empty MySQL database.
+2. Set your database credentials in ```config.inc.php```
+3. ```php loadfile.php --verbose test.txt``` and look for newly created tables ```i_test``` and ```isys_log``` in your database.
+
 - ```php loadfile.php``` without arguments to get a list of options. Endpoint write.php uses the same options.
 - ```curl -i -XPOST 'http://localhost/my-influxdb/write.php?verbose' --data-binary @test.txt```
 - ```curl -i -XPOST 'http://localhost/my-influxdb/write.php?verbose' --data-binary 'test,node=newnode rssi=-456'```
