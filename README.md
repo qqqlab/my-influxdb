@@ -49,7 +49,7 @@ Benchmark write endpoint (single threaded http client -> dockerized vserver with
 runtime multi: 1000 rec in 4.23 sec = 236 rec/sec  
 runtime single: 1000 rec in 11.67 sec = 85 rec/sec
 
-## Not Implemented
+## Not Implemented InfluxDB Features
 - Authentication (workaround: use https and move the write.php script to a 'secret' location: /mysecretkey/write.php)
 - Retention Policies (workaround: cron job or MySQL events)
 - Continuous Queries (workaround: cron job or MySQL events)
