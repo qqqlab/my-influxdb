@@ -39,6 +39,7 @@ Get the best of both worlds: dynamic data storage properties of a dedicated time
 - Keep the number of tags low, the tag indexes use a lot of disk space.
 - Sending an initial quoted numeric value creates a numeric (not text) column. (workaround: manually change the column to text.)
 - Unlike InfluxDB all double quotes are removed from Line Protocol data. So ```test,tag="foo" fld="bar"``` stores ```foo``` and ```bar```, InfluxDB would store ```"foo"``` and ```bar```.
+- Table names are case sensitive, tags and fields are case insensitive.
 
 ## Requirements
 - Webserver with PHP >= 5.6 (tested with 5.6 & 7.0)
@@ -46,8 +47,14 @@ Get the best of both worlds: dynamic data storage properties of a dedicated time
 
 ## Benchmarks
 Benchmark write endpoint (single threaded http client -> dockerized vserver with 2G memory)  
-runtime multi: 1000 rec in 4.23 sec = 236 rec/sec  
-runtime single: 1000 rec in 11.67 sec = 85 rec/sec
+
+without logging  
+runtime multi: 1000 rows in 1.20 sec = 830 rows/sec  
+runtime single: 1000 rows in 5.37 sec = 186 rows/sec
+
+with logging  
+runtime multi: 1000 rows in 2.39 sec = 418 rows/sec  
+runtime single: 1000 rows in 6.92 sec = 144 rows/sec
 
 ## Not Implemented InfluxDB Features
 - Authentication (workaround: use https and move the write.php script to a 'secret' location: /mysecretkey/write.php)

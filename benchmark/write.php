@@ -1,12 +1,17 @@
 <?php
 //===========================================================
 // Benchmark write endpoint
-// runtime multi: 1000 rec in 4.2364399433136 sec = 236/sec
-// runtime single: 1000 rec in 11.671812057495 sec = 85/sec
+//
+// without logging
+// runtime multi: 1000 rec in 1.2044811248779 sec = 830/sec
+// runtime single: 1000 rec in 5.3741478919983 sec = 186/sec
+// with logging
+// runtime multi: 1000 rec in 2.3916320800781 sec = 418/sec
+// runtime single: 1000 rec in 6.9235417842865 sec = 144/sec
 //===========================================================
 //CONFIG
 $url = 'http://localhost/my-influxdb/write.php?verbose';
-$cnt = 100; //number of records to write (benchmark writes 2 * $cnt + 1 records)
+$cnt = 1000; //number of records to write (benchmark writes 2 * $cnt + 1 records)
 $verbose = false; //show results of each request
 //===========================================================
 
