@@ -254,18 +254,15 @@ public function log($msg,$result) {
       // 0.1% chance of getting executed
       if(! is_callable('pcntl_fork')) {
         $this->log_truncate();
-        $this->log_insert('log truncated','LOG');
       }else{
         //start a new process to do the truncate (async queries not allowed with pdo, can do with mysqli?)
         switch(pcntl_fork()) {
           case -1: //could not fork
             $this->log_truncate();
-            $this->log_insert('log truncated','LOG');
             break;
           case 0; //child
             $this->db_connect(); //reconnect both child and parent - otherwise "MySQL server has gone away" error
             $this->log_truncate();
-            $this->log_insert('log truncated','LOG');
             exit();
             break;
           default: //parent
@@ -298,6 +295,7 @@ private function log_create() {
 private function log_truncate() {
    $delrows = $this->db->query('SELECT count(*) FROM `' . MYIF_SYSTABLE_PREFIX . 'log`')->fetchColumn() - MYIF_LOG_ROWS;
    if($delrows > 0) $this->db->query('DELETE FROM `' . MYIF_SYSTABLE_PREFIX . 'log` ORDER BY log_ts LIMIT ' . $delrows);
+   $this->log_insert("log: deleted $delrow rows",'LOG');
 }
 
 
