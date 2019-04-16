@@ -3,7 +3,7 @@
 // HTTP endpoint for receiving raw sensor data
 //=======================================================
 //CONFIG
-define('PRECISION', 60);
+define('PRECISION', 300);
 //=======================================================
 
 require_once('config.inc.php');
@@ -53,6 +53,10 @@ function write_sensor($json, $influx) {
   unset($jdata['m']);
   unset($mdata['node']);
   $influx->fld = array_merge($jdata,$mdata);
+
+  //field modes
+  foreach($mdata as $k=>$v) $influx->fld_mode[$k] = 'A';
+  if(isset($influx->fld['rssi'])) $influx->fld_mode['rssi'] = 'A';
 
   //insert
   return $influx->write();
