@@ -10,7 +10,8 @@
 // runtime single: 1000 rec in 6.9235417842865 sec = 144/sec
 //===========================================================
 //CONFIG
-$url = 'http://localhost/my-influxdb/write.php?verbose';
+require '../config.inc.php';
+$url = MYIF_BASE_URL . '/write.php?verbose';
 $cnt = 1000; //number of records to write (benchmark writes 2 * $cnt + 1 records)
 $verbose = false; //show results of each request
 //===========================================================
@@ -31,8 +32,7 @@ sleep(1);
 $time_start = microtime(true);
 http_post($msg_multi);
 $dt =  microtime(true) - $time_start;
-$n = floor($cnt/$dt);
-echo "runtime multi: $cnt rec in $dt sec = $n/sec\n";
+printf("runtime double: %d rows in %7.3f sec, %7.3f ms/row, %7d rows/sec\n",$cnt,$dt,$dt*1000/$cnt,$cnt/$dt);
 
 //wait 1 second to make sure next inserts are inserts and not updates
 sleep(1);
@@ -41,8 +41,7 @@ sleep(1);
 $time_start = microtime(true);
 foreach($msg as $msg_single) http_post($msg_single);
 $dt =  microtime(true) - $time_start;
-$n = floor($cnt/$dt);
-echo "runtime single: $cnt rec in $dt sec = $n/sec\n";
+printf("runtime single: %d rows in %7.3f sec, %7.3f ms/row, %7d rows/sec\n",$cnt,$dt,$dt*1000/$cnt,$cnt/$dt);
 
 
 function http_post($msg) {

@@ -9,6 +9,33 @@ runtime parse1: 300000 rec in 12.622388124466 sec = 23767/sec
 runtime parse2: 300000 rec in 15.383553981781 sec = 19501/sec
 */
 
+$s='ta\\\\bl\\,e,tag1="va\\\\,= \\"\\\\l1",tag2=,tag3=val3 field1=val3,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4 timestamp';
+
+$cnt = 100000;
+
+
+$time_start = microtime(true);
+$a=new a;
+for($i=0;$i<$cnt;$i++) {
+  $rv = $a->parse1($s);
+}
+//print_r($a);
+//echo "RV=$rv\n";
+$dt = microtime(true) - $time_start;
+printf("runtime parse1: %d rows in %7.3f sec, %7.3f ms/row, %7d rows/sec\n",$cnt,$dt,$dt*1000/$cnt,$cnt/$dt);
+
+$time_start = microtime(true);
+$a=new a;
+for($i=0;$i<$cnt;$i++) {
+  $rv = $a->parse2($s);
+}
+//print_r($a);
+//echo "RV=$rv\n";
+$dt = round(microtime(true) - $time_start,2);
+printf("runtime parse2: %d rows in %7.3f sec, %7.3f ms/row, %7d rows/sec\n",$cnt,$dt,$dt*1000/$cnt,$cnt/$dt);
+
+
+
 
 
 class a{
@@ -166,32 +193,5 @@ public function parse1($s) {
 
 
 }
-
-$s='ta\\\\bl\\,e,tag1="va\\\\,= \\"\\\\l1",tag2=,tag3=val3 field1=val3,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4,field4=val4 timestamp';
-
-$cnt = 300000;
-
-
-$time_start = microtime(true);
-$a=new a;
-for($i=0;$i<$cnt;$i++) {
-  $rv = $a->parse1($s);
-}
-//print_r($a);
-//echo "RV=$rv\n";
-$dt =  microtime(true) - $time_start;
-$n = floor($cnt/$dt);
-echo "runtime parse1: $cnt rec in $dt sec = $n/sec\n";
-
-$time_start = microtime(true);
-$a=new a;
-for($i=0;$i<$cnt;$i++) {
-  $rv = $a->parse2($s);
-}
-//print_r($a);
-//echo "RV=$rv\n";
-$dt =  microtime(true) - $time_start;
-$n = floor($cnt/$dt);
-echo "runtime parse2: $cnt rec in $dt sec = $n/sec\n";
 
 

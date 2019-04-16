@@ -1,6 +1,6 @@
 <?php
 //load relocated config file instead of this one - next line can be removed
-if(file_exists(__DIR__.'/../config.inc.php')) {require_once('../config.inc.php'); return;}
+if(file_exists(__DIR__.'/../config.inc.php')) {require_once(__DIR__.'/../config.inc.php'); return;}
 
 //database
 define('DB_HOST', 'localhost');
@@ -18,3 +18,5 @@ define('MYIF_SYSTABLE_PREFIX','isys_');
 //note: the log has a 1/1000 change of getting purged upon each write. It will also grow to approx 1000 rows more than the value set here.
 define('MYIF_LOG_ROWS',10000);
 
+//for benchmarks
+define('MYIF_BASE_URL', 'http://localhost/my-influxdb');
