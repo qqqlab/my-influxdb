@@ -28,7 +28,8 @@ Get the best of both worlds: dynamic data storage properties of a dedicated time
 - HTTP /write API for writing data with InfluxDB Line Protocol 
 - Load data from file with InfluxDB Line Protocol 
 - Precision, but different implementation than InfluxDB. Precision is a value in seconds, and the timestamp is rounded down to that many seconds. Only the last value written to a datapoint (row) is kept in the database. For example: precision 3600 will only keep one value per hour, samples with timestamps 10:11:12 and 10:54:23 are both written to datapoint 10:00:00.
-- Downsampling arriving data with Average, Min, Max, First, and Last operators.
+- Downsample arriving data with Average, Min, Max, First, and Last operators.
+- Precision and downsampling mode [A]vg, mi[N], ma[X], [F]irst, [L]ast can be set in the Line Protocol with colon (:) extension. For example: ```test:60 fld1:A=5,fld2:L="last"``` will store the average for fld1 and the last value for fld1 over the precision period of 60 seconds.
 - Optional logging of all write requests, ip address, and result to a database table, and automatic deletion of stale log entries. 
 
 ## Requirements
@@ -37,7 +38,6 @@ Get the best of both worlds: dynamic data storage properties of a dedicated time
 
 ## Hints/Gotchas 
 - Use the precision option to downsample data as it arrives.
-- Extension of Line Protocol: A field name can be appended with colon (:) plus aggegration operator flag: [A]vg, mi[N], ma[X], [F]irst, [L]ast. For example: ```field1:A=5,field2:L="last"``` will store the average for field1 and the last value for field1 over the precision period. 
 - Keep the number of tags low, the tag indexes use a lot of disk space.
 - Sending an initial quoted numeric value creates a numeric (not text) column. (workaround: manually change the column to text.)
 - Unlike InfluxDB all double quotes are removed from Line Protocol data. So ```test,tag="foo" fld="bar"``` stores ```foo``` and ```bar```, InfluxDB would store ```"foo"``` and ```bar```.

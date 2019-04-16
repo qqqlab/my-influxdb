@@ -2,7 +2,7 @@
 
 class MyInfluxDB {
 
-//the current dataset, set by parse() or external program
+//current dataset, set by parse() or external program
 public  $tbl;               //tablename
 public  $tag;               //array of tags and values
 public  $fld;               //array of fields and values
@@ -10,20 +10,21 @@ private $ts;                //timestamp in unix format
 public  $fld_mode;          //mode for field: Last First miN maX Avg
 private $precision = 0;     //number of seconds for rounding time stamps
 
-//current dataset sql escaped
+//current dataset sql escaped (keys inside backticks, values inside quotes or NULL)
 private $tbl_e;             //tablename
 private $tag_e;             //array of tags and values
 private $fld_e;             //array of fields and values
 private $ts_e;              //timestamp in unix format
+private $fld_mode_e;        //mode for field: Last First miN maX Avg
 
 //row options
-public $mode = 'L';         //Last First miN maX Avg
+public $mode = 'L';         //default mode for fields: Last First miN maX Avg
 public $noupdate = false;   //disable updates
 public $nocreate = false;   //disable creating tables
 public $noaddtag = false;   //disable adding tags
 public $noaddfield = false; //disable adding fields
 
-public  $db;                //PDO database object
+public $db;                 //PDO database object
 public $err;                //last error message
 
 
@@ -72,18 +73,19 @@ public function db_connect() {
 
 //prepare dataset for database functions
 private function prepare_dataset() {
-  //escape dataset - including backticks for names
+  //escape dataset - including backticks for names (keys) and quotes for values
   $this->tbl_e = '`' .  MYIF_TABLE_PREFIX . $this->esc($this->tbl) . '`';
   $this->tag_e = [];
-  foreach($this->tag as $k=>$v) $this->tag_e['`' . $this->esc($k). '`'] = $this->esc($v);
+  foreach($this->tag as $k=>$v) $this->tag_e['`' . $this->esc($k). '`'] = ($v===''?'NULL':"'".$this->esc($v)."'");
   $this->fld_e = [];
-  foreach($this->fld as $k=>$v) $this->fld_e['`' . $this->esc($k). '`'] = $this->esc($v);
-  $this->ts_e = $this->esc($this->ts);
-
-  //set fld_mode
+  $this->fld_mode_e = [];
   foreach($this->fld as $k=>$v) {
+    $k_e = '`' . $this->esc($k). '`'; 
+    $this->fld_e[$k_e] = ($v===''?'NULL':"'".$this->esc($v)."'");
     if(!isset($this->fld_mode[$k])) $this->fld_mode[$k] = $this->mode;
+    $this->fld_mode_e[$k_e] =  $this->fld_mode[$k];
   }
+  $this->ts_e = $this->esc($this->ts);
 }
 
 private function esc($v) {
@@ -99,8 +101,8 @@ private function insert() {
     foreach($this->fld_e as $k=>$v) $sql .= ",$k";
     $sql .= ') VALUES (';
     $sql .= "from_unixtime($this->ts_e)";
-    foreach($this->tag_e as $k=>$v) $sql .= ",'$v'";
-    foreach($this->fld_e as $k=>$v) $sql .= ",'$v'";
+    foreach($this->tag_e as $k=>$v) $sql .= ",$v";
+    foreach($this->fld_e as $k=>$v) $sql .= ",$v";
     $sql .= ')';
     $this->db_query($sql);
   }catch (\PDOException $e) {
@@ -121,32 +123,6 @@ private function insert() {
   return "OK";
 }
 
-/*
-private function update() {
-  try{
-    if($this->ts===null) {$this->err = 'ts not set'; return 'ERROR';}
-    if($this->noupdate) {$this->err = 'update not allowed, noupdate flag is set'; return 'ERROR';}
-
-    $sql = "UPDATE $this->tbl_e SET ";
-    $first=true;
-    foreach($this->fld_e as $k=>$v) {
-      $sql .= ($first?'':',') . "$k='$v'";
-      $first=false;
-    }
-    $sql .= ' WHERE ts = ';
-    $sql .= "from_unixtime($this->ts_e)";
-    foreach($this->tag_e as $k=>$v) $sql .= " AND $k=\'$v'";
-    $sql.=' LIMIT 1';
-
-    $this->db_query($sql);
-  }catch (\PDOException $e) {
-    $this->err = $e->getMessage();
-    return "ERROR";
-  }
-  return "OK";
-}
-*/
-
 private function insupd() {
   try{
     if($this->ts===null) {$this->err = 'ts not set'; return 'ERROR';}
@@ -157,36 +133,33 @@ private function insupd() {
     foreach($this->fld_e as $k=>$v) $sql .= ",$k";
     $sql .= ') VALUES (';
     $sql .= 'from_unixtime('.$this->esc($this->ts).')';
-    foreach($this->tag_e as $k=>$v) $sql .= ",'$v'";
-    foreach($this->fld_e as $k=>$v) $sql .= ",'$v'";
+    foreach($this->tag_e as $k=>$v) $sql .= ",$v";
+    foreach($this->fld_e as $k=>$v) $sql .= ",$v";
     $sql .= ')';
     $sql .= ' ON DUPLICATE KEY UPDATE ';
     if(in_array('A',$this->fld_mode)) $sql .= 'ts_cnt=ts_cnt+1,';    
     $first=true;
-    foreach($this->fld as $kk=>$vv) {
+    foreach($this->fld_e as $k=>$v) {
       $sql .= ($first?'':',');
       $first=false;
-      $k = $this->esc($kk);
-      $v = $this->esc($vv);
-      $vnull = "nullif('$v','')";
-      switch($this->fld_mode[$kk]) {
+      switch($this->fld_mode_e[$k]) {
         case 'L': //Last
-          $sql .= "`$k`='$v'";
+          $sql .= "$k=$v";
           break; 
         case 'F': //First
-          $sql .= "`$k`=`$k`";
+          $sql .= "$k=$k";
           break;
         case 'N': //miN
-          $sql .= "`$k`=least(coalesce(`$k`,$vnull),$vnull)";
+          $sql .= "$k=least(coalesce($k,$v),$v)";
           break;
         case 'X': //maX
-          $sql .= "`$k`=greatest(coalesce(`$k`,$vnull),$vnull)";
+          $sql .= "$k=greatest(coalesce($k,$v),$v)";
           break;
         case 'A': //Average
-          $sql .= "`$k`=coalesce((`$k`*(ts_cnt-1)+$vnull)/ts_cnt,`$k`,$vnull)";
+          $sql .= "$k=coalesce(($k*(ts_cnt-1)+$v)/ts_cnt,$k,$v)";
           break;
         default: 
-           $this->err = "Unknown mode ".$this->fld_mode[$kk]." for field $kk";
+           $this->err = "Unknown mode ".$this->fld_mode_e[$k]." for field $k";
            return "ERROR";
       }
     }
@@ -436,6 +409,12 @@ public function parse($s) {
     $this->setTs(time());
   }
 
+  //split "tablename:precision"
+  $parts = explode(':',$this->tbl,2);
+  if(count($parts)==2) {
+    $this->tbl = $parts[0];
+    if(((int)$parts[1]) > 0) $this->precision = (int)$parts[1];
+  } 
   return 0;
 }
 
