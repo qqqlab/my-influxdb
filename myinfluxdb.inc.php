@@ -1,20 +1,31 @@
 <?php
 
 class MyInfluxDB {
-public  $db;  //PDO database object
 
 //the current dataset, set by parse() or external program
-public  $tbl; //tablename
-public  $tag; //array of tags and values
-public  $fld; //array of fields and values
-private $ts;  //timestamp in unix format
+public  $tbl;               //tablename
+public  $tag;               //array of tags and values
+public  $fld;               //array of fields and values
+private $ts;                //timestamp in unix format
+public  $fld_mode;          //mode for field: Last First miN maX Avg
+private $precision = 0;     //number of seconds for rounding time stamps
 
-private $precision = 0; //number of seconds for rounding time stamps
-public $noupdate = false; //disable updates
-public $nocreate = false; //disable creating tables
-public $noaddtag = false; //disable adding tags
+//current dataset sql escaped
+private $tbl_e;             //tablename
+private $tag_e;             //array of tags and values
+private $fld_e;             //array of fields and values
+private $ts_e;              //timestamp in unix format
+
+//row options
+public $mode = 'L';         //Last First miN maX Avg
+public $noupdate = false;   //disable updates
+public $nocreate = false;   //disable creating tables
+public $noaddtag = false;   //disable adding tags
 public $noaddfield = false; //disable adding fields
-public $err; //last error message
+
+public  $db;                //PDO database object
+public $err;                //last error message
+
 
 public function setTs($val) {
   if($this->precision) 
@@ -41,6 +52,7 @@ public function clear() {
   $this->tag = [];
   $this->fld = [];
   $this->ts = null;
+  $this->fld_mode = [];
 }
 
 //==========================================================
@@ -58,48 +70,49 @@ public function db_connect() {
   $this->db = new PDO($dsn, DB_USER, DB_PASS, $options);
 }
 
+//prepare dataset for database functions
+private function prepare_dataset() {
+  //escape dataset - including backticks for names
+  $this->tbl_e = '`' .  MYIF_TABLE_PREFIX . $this->esc($this->tbl) . '`';
+  $this->tag_e = [];
+  foreach($this->tag as $k=>$v) $this->tag_e['`' . $this->esc($k). '`'] = $this->esc($v);
+  $this->fld_e = [];
+  foreach($this->fld as $k=>$v) $this->fld_e['`' . $this->esc($k). '`'] = $this->esc($v);
+  $this->ts_e = $this->esc($this->ts);
+
+  //set fld_mode
+  foreach($this->fld as $k=>$v) {
+    if(!isset($this->fld_mode[$k])) $this->fld_mode[$k] = $this->mode;
+  }
+}
+
 private function esc($v) {
   return substr($this->db->quote($v), 1, -1);
 }
 
-public function getDbTbl() {
-  return MYIF_TABLE_PREFIX . $this->esc($this->tbl);
-}
-
-//get list of tags and fields from database
-private function getDbTblInfo() {
-  $rv = [];
-  $result = $this->db->query('SHOW COLUMNS FROM `' . $this->getDbTbl() .'`');
-  while($row = $result->fetch()){
-    $istag = ($row['Key'] == 'PRI');
-    $name = $row['Field'];
-    if($name=='ts') continue;
-    if($istag) $rv['tag'][]=$name; else $rv['fld'][]=$name;
-  }
-  return $rv;
-}
-
 private function insert() {
   try{
-    if($this->ts===null) return 'ts not set';
+    if($this->ts===null) {$this->err = 'ts not set'; return 'ERROR';}
 
-    $sql = 'INSERT INTO `' . $this->getDbTbl() . '`(ts';
-    foreach($this->tag as $k=>$v) $sql .= ',`'.$this->esc($k).'`';
-    foreach($this->fld as $k=>$v) $sql .= ',`'.$this->esc($k).'`';
+    $sql = "INSERT INTO $this->tbl_e (ts";
+    foreach($this->tag_e as $k=>$v) $sql .= ",$k";
+    foreach($this->fld_e as $k=>$v) $sql .= ",$k";
     $sql .= ') VALUES (';
-    $sql .= 'from_unixtime('.$this->esc($this->ts).')';
-    foreach($this->tag as $k=>$v) $sql .= ',\'' . $this->esc($v) . '\'';
-    foreach($this->fld as $k=>$v) $sql .= ',\'' . $this->esc($v) . '\'';
+    $sql .= "from_unixtime($this->ts_e)";
+    foreach($this->tag_e as $k=>$v) $sql .= ",'$v'";
+    foreach($this->fld_e as $k=>$v) $sql .= ",'$v'";
     $sql .= ')';
     $this->db_query($sql);
   }catch (\PDOException $e) {
     switch($e->errorInfo[1]) {
+      case 1146: //table does not exit
+        return "CREATE";
       case 1054: //unknow column
         return "ALTER";
       case 1062: //duplicate key
-        return "UPDATE";
-      case 1146: //table does not exit
-        return "CREATE";
+        if($this->noupdate) {$this->err = 'update not allowed, noupdate flag is set'; return 'ERROR';}
+        $this->err = $e->getMessage();
+        return "ERROR";
       default:
         $this->err = $e->getMessage(); 
         return "ERROR";
@@ -108,20 +121,21 @@ private function insert() {
   return "OK";
 }
 
+/*
 private function update() {
   try{
     if($this->ts===null) {$this->err = 'ts not set'; return 'ERROR';}
     if($this->noupdate) {$this->err = 'update not allowed, noupdate flag is set'; return 'ERROR';}
 
-    $sql = 'UPDATE `' . $this->getDbTbl() . '` SET ';
+    $sql = "UPDATE $this->tbl_e SET ";
     $first=true;
-    foreach($this->fld as $k=>$v) {
-      $sql .= ($first?'':',') . '`' . $this->esc($k) . '`=\'' . $this->esc($v) . '\'';
+    foreach($this->fld_e as $k=>$v) {
+      $sql .= ($first?'':',') . "$k='$v'";
       $first=false;
     }
     $sql .= ' WHERE ts = ';
-    $sql .= 'from_unixtime('.$this->esc($this->ts).')';
-    foreach($this->tag as $k=>$v) $sql .= ' AND `' . $this->esc($k) . '`=\'' . $this->esc($v) . '\'';
+    $sql .= "from_unixtime($this->ts_e)";
+    foreach($this->tag_e as $k=>$v) $sql .= " AND $k=\'$v'";
     $sql.=' LIMIT 1';
 
     $this->db_query($sql);
@@ -131,18 +145,78 @@ private function update() {
   }
   return "OK";
 }
+*/
+
+private function insupd() {
+  try{
+    if($this->ts===null) {$this->err = 'ts not set'; return 'ERROR';}
+    if($this->noupdate) return insert();
+
+    $sql = "INSERT INTO $this->tbl_e (ts";
+    foreach($this->tag_e as $k=>$v) $sql .= ",$k";
+    foreach($this->fld_e as $k=>$v) $sql .= ",$k";
+    $sql .= ') VALUES (';
+    $sql .= 'from_unixtime('.$this->esc($this->ts).')';
+    foreach($this->tag_e as $k=>$v) $sql .= ",'$v'";
+    foreach($this->fld_e as $k=>$v) $sql .= ",'$v'";
+    $sql .= ')';
+    $sql .= ' ON DUPLICATE KEY UPDATE ';
+    if(in_array('A',$this->fld_mode)) $sql .= 'ts_cnt=ts_cnt+1,';    
+    $first=true;
+    foreach($this->fld as $kk=>$vv) {
+      $sql .= ($first?'':',');
+      $first=false;
+      $k = $this->esc($kk);
+      $v = $this->esc($vv);
+      $vnull = "nullif('$v','')";
+      switch($this->fld_mode[$kk]) {
+        case 'L': //Last
+          $sql .= "`$k`='$v'";
+          break; 
+        case 'F': //First
+          $sql .= "`$k`=`$k`";
+          break;
+        case 'N': //miN
+          $sql .= "`$k`=least(coalesce(`$k`,$vnull),$vnull)";
+          break;
+        case 'X': //maX
+          $sql .= "`$k`=greatest(coalesce(`$k`,$vnull),$vnull)";
+          break;
+        case 'A': //Average
+          $sql .= "`$k`=coalesce((`$k`*(ts_cnt-1)+$vnull)/ts_cnt,`$k`,$vnull)";
+          break;
+        default: 
+           $this->err = "Unknown mode ".$this->fld_mode[$kk]." for field $kk";
+           return "ERROR";
+      }
+    }
+    $this->db_query($sql);
+  }catch (\PDOException $e) {
+    switch($e->errorInfo[1]) {
+      case 1054: //unknow column
+        return "ALTER";
+      case 1146: //table does not exit
+        return "CREATE";
+      default:
+        $this->err = $e->errorInfo[1] . ' ' . $e->getMessage();
+        return "ERROR";
+    }
+  }
+  return "OK";
+}
 
 private function create() {
   try{
     if($this->nocreate) {$this->err = 'create not allowed, nocreate flag is set'; return 'ERROR';}
 
-    $sql = 'CREATE TABLE `' . $this->getDbTbl() . '`(ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP';
-    foreach($this->tag as $k=>$v) $sql.=',`' . $this->esc($k) . '` VARCHAR(255) NOT NULL';
-    foreach($this->fld as $k=>$v) $sql.=',`' . $this->esc($k) . '` ' . (is_numeric($v) ? 'FLOAT' : 'VARCHAR(255)') . ' NULL DEFAULT NULL';
+    $sql = "CREATE TABLE $this->tbl_e (ts TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP";
+    if(in_array('A',$this->fld_mode)) $sql .= ',ts_cnt SMALLINT UNSIGNED NOT NULL DEFAULT 1';
+    foreach($this->tag_e as $k=>$v) $sql.=",$k VARCHAR(255) NOT NULL";
+    foreach($this->fld_e as $k=>$v) $sql.=",$k " . (is_numeric($v) ? 'FLOAT' : 'VARCHAR(255)') . ' NULL DEFAULT NULL';
     $sql.=",PRIMARY KEY (ts";
-    foreach($this->tag as $k=>$v) $sql.=",`".$this->esc($k)."`";
+    foreach($this->tag_e as $k=>$v) $sql.=",$k";
     $sql.=")";
-    foreach($this->tag as $k=>$v) $sql.=",KEY `".$this->esc($k)."`(`".$this->esc($k)."`)";
+    foreach($this->tag_e as $k=>$v) $sql.=",KEY $k($k)";
     $sql.=")";
     $this->db_query($sql);
   }catch (\PDOException $e) {
@@ -153,16 +227,27 @@ private function create() {
 }
 
 private function alter() {
-  //load db meta data
-  $meta = $this->getDbTblInfo();
-  $err = '';
+  $err = ''; 
+ 
+  //get list of tags and fields from database
+  $meta = [];
+  $result = $this->db->query("SHOW COLUMNS FROM $this->tbl_e");
+  while($row = $result->fetch()){
+    $istag = ($row['Key'] == 'PRI');
+    $name = $row['Field'];
+    if($name=='ts') continue;
+    if($istag) $meta['tag'][]=$name; else $meta['fld'][]=$name;
+  }
+
+  //create ts_cnt
+  if(in_array('A',$this->fld_mode) && !in_array('ts_cnt',$meta['fld']) && !in_array('ts_cnt',$meta['tag'])) $this->db_query("ALTER TABLE $this->tbl_e ADD ts_cnt SMALLINT UNSIGNED NOT NULL DEFAULT 1 AFTER ts");
 
   //create fields (do not create field if column already exists as tag)
   foreach($this->fld as $k=>$v) if(!in_array($k,$meta['fld']) && !in_array($k,$meta['tag'])) {
     if($this->noaddfield) 
       $err = 'add field not allowed, noaddfield flag is set';
     else
-      $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD `' . $this->esc($k) . '` ' . (is_numeric($v) ? 'FLOAT' : 'VARCHAR(255)') . ' NULL DEFAULT NULL' );
+      $this->db_query("ALTER TABLE $this->tbl_e ADD `" . $this->esc($k) . '` ' . (is_numeric($v) ? 'FLOAT' : 'VARCHAR(255)') . ' NULL DEFAULT NULL' );
   }
 
   //create tags (do not create tag if column already exists as field)
@@ -171,14 +256,14 @@ private function alter() {
     if($this->noaddtag) {
       $err .= ($err?', ':'') . 'add tag not allowed, noaddtag flag is set';
     }else{
-      $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD `' . $this->esc($k) . '` VARCHAR(255) NOT NULL AFTER `' . $this->esc(end($meta['tag'])) . '`' );
-      $this->db_query('ALTER TABLE `' . $this->getDbTbl() . '` ADD INDEX `' . $this->esc($k) . '` (`' . $this->esc($k) . '`)');
+      $this->db_query("ALTER TABLE $this->tbl_e ADD `" . $this->esc($k) . '` VARCHAR(255) NOT NULL AFTER `' . $this->esc(end($meta['tag'])) . '`' );
+      $this->db_query("ALTER TABLE $this->tbl_e ADD INDEX `" . $this->esc($k) . '` (`' . $this->esc($k) . '`)');
       $created_tags[] = $k;
     }
   }
   if($created_tags) {
     //set primary key to include new tag(s)
-    $sql = 'ALTER TABLE `' . $this->getDbTbl() . '` DROP PRIMARY KEY, ADD PRIMARY KEY (`ts`';
+    $sql = "ALTER TABLE $this->tbl_e DROP PRIMARY KEY, ADD PRIMARY KEY (ts";
     foreach($meta['tag'] as $tag)  $sql .= ',`' . $this->esc($tag) . '`'; //current tags
     foreach($created_tags as $tag) $sql .= ',`' . $this->esc($tag) . '`'; //new tags
     $sql .= ') USING BTREE';
@@ -189,7 +274,7 @@ private function alter() {
 }
 
 private function db_query($sql) {
-  //echo "$sql\n";
+  echo "$sql\n";
   return $this->db->query($sql);
 }
 
@@ -200,40 +285,24 @@ private function db_query($sql) {
 
 //write to db - create table / alter table / insert record / update record as required
 public function write() {
-  $op = 'insert';
-  $rv = $this->insert();
-  switch($rv) {
-    case "OK":
+  $this->prepare_dataset();
+  $op = 'insupd';
+  switch($this->insupd()) {
+    case 'OK':
       return "OK $op";
-    case "CREATE":
+    case 'CREATE':
       $op = 'create';
-      $rv = $this->create();
-      if($rv == 'OK') {
-        $op = 'create insert';
-        $rv = $this->insert();
-        if($rv=="OK") return("OK $op"); 
+      if($this->create() == 'OK') {
+        $op = "create insupd";
+        if($this->insupd() == 'OK') return "OK $op"; 
       }
       break;
-    case "ALTER":
+    case 'ALTER':
       $op = "alter";
-      $rv = $this->alter();
-      if($rv == 'OK') {
-        $op = 'alter insert';
-        $rv = $this->insert();
-        switch($this->insert()) {
-          case "OK": 
-            return "OK $op";
-          case "UPDATE":
-            $op = 'alter update';
-            $rv = $this->update();
-            if($rv=="OK") return("OK $op"); 
-        }
+      if($this->alter() == 'OK') {
+        $op = "alter insupd";
+        if($this->insupd() == 'OK') return "OK $op" ;
       }
-      break;
-    case "UPDATE":
-      $op = 'update';
-      $rv = $this->update();
-      if($rv=="OK") return("OK $op");
       break;
   }
   return "ERROR $op: $this->err";
@@ -306,6 +375,8 @@ private function log_truncate() {
 //parse an influx line protocol string "table,tag1=val1,tag2=val2 field1=val3,field4=val4 timestamp"
 //returns 0 on success
 public function parse($s) {
+  $this->clear();
+
   $s=trim($s);
 
   //split influx string into array with: value,delim,value,delim,...
@@ -340,9 +411,6 @@ public function parse($s) {
   $cnt = count($p);
   if($cnt < 5) return 1; //minimum 5 parts: "tbl fld=val"
   $this->tbl = $p[0];
-  $this->tag = [];
-  $this->fld = [];
-  $this->ts = null;
   $i = 1;
   while($p[$i]==','){
     if($i+4 > $cnt) return 2;
@@ -353,12 +421,12 @@ public function parse($s) {
   if($i+4 > $cnt) return 5;
   if($p[$i]!=' ') return 6;
   if($p[$i+2] != '=') return 7;
-  $this->fld[$p[$i+1]] = $p[$i+3];
+  $this->parse_fld($p[$i+1], $p[$i+3]);
   $i+=4;
   while($i < $cnt && $p[$i]==','){
     if($i+4 > $cnt) return 8;
     if($p[$i+2] != '=') return 9;
-    $this->fld[$p[$i+1]] = $p[$i+3];
+    $this->parse_fld($p[$i+1], $p[$i+3]);
     $i+=4;
   }
   if($i+1 < $cnt) {
@@ -367,7 +435,20 @@ public function parse($s) {
   }else{
     $this->setTs(time());
   }
+
   return 0;
+}
+
+//set fld_mode
+private function parse_fld($k,$v) {
+  $parts = explode(':',$k,2);
+  if(count($parts)==2) {
+    $this->fld[$parts[0]] = $v;
+    $this->fld_mode[$parts[0]] = $parts[1];
+  }else{
+    $this->fld[$k] = $v;
+    $this->fld_mode[$k] = $this->mode;
+  }
 }
 
 //write single influx line to database
@@ -394,6 +475,7 @@ public function write_line($line,$verbose) {
 public function write_file($filename,$options) {
   $verbose = false;
   if(isset($options['precision'])) $this->setPrecision($options['precision']);
+  if(isset($options['mode'])) $this->mode = $options['mode'];
   if(array_key_exists('verbose',$options)) $verbose = true;
   if(array_key_exists('noupdate',$options)) $this->noupdate = true;
   if(array_key_exists('nocreate',$options)) $this->nocreate = true;
@@ -408,7 +490,6 @@ public function write_file($filename,$options) {
   fclose($f);
   return '';
 }
-
 
 }//class
 

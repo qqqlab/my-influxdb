@@ -5,6 +5,7 @@ require_once('myinfluxdb.inc.php');
 if($argc<2) die("usage: loadfile.php [--option=value] ... <filename>
    --verbose              Verbose output
    --precision=<seconds>  Set precision
+   --mode=<modechar>      Set mode: [A]verage, mi[N]imum, ma[X]imum, [F]irst, [L]ast
    --noupdate             Disable update, only inserts are allowed
    --nocreate             Disable creating tables
    --noaddtag             Disable adding tag columns
