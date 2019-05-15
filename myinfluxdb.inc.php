@@ -470,5 +470,23 @@ public function write_file($filename,$options) {
   return '';
 }
 
+//==========================================================
+// PRINT DATASET AS INFLUX PROTOCOL DATA
+//==========================================================
+//return influx line protocol string "table,tag1=val1,tag2=val2 field1=val3,field4=val4 timestamp"
+public function protostring() {
+  $s = $this->tbl;
+  foreach($this->tag as $k=>$v) $s .= ",$k=$v";
+  $s .= " ";
+  $first = true;
+  foreach($this->fld as $k=>$v) {
+    $s .= ($first?"":",") . "$k=$v";
+    $frist = false;
+  }
+  $s .= " ";
+  $s .= $this->ts; 
+  return $s;
+}
+
 }//class
 

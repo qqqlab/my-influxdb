@@ -4,6 +4,7 @@
 //=======================================================
 //CONFIG
 define('PRECISION', 300);
+define('TBL','sensor');
 //=======================================================
 
 require_once('config.inc.php');
@@ -16,7 +17,7 @@ $json = file_get_contents('php://input');
 $influx = new MyInfluxDB();
 $influx->db_connect();
 $result = write_sensor($json, $influx);
-$influx->log($json,$result);
+$influx->log($influx->protostring() . " " . $json,$result);
 if(substr($result,0,2)!='OK') http_response_code(400);
 die($result);
 
@@ -24,18 +25,25 @@ function write_sensor($json, $influx) {
   if(!$json) return "ERROR no post data";
   $jdata = json_decode($json,true);
   if(!$jdata) return "ERROR json_decode($json)";
-  if(!isset($jdata['tbl'])) return("ERROR tbl not specified");
-  $m = base64_decode($jdata['m']);
-  if(!$m) return "ERROR base64_decode($jdata[m])";
-  $mdata = msg_decode($m); 
-  if(!$mdata) return "ERROR msg_decode($m)";
-  if(!isset($mdata['node'])) return "ERROR node not specified";
+  //if(!isset($jdata['tbl'])) return("ERROR tbl not specified");
+  if(isset($jdata['m'])) {
+    $m = base64_decode($jdata['m']);
+    if(!$m) return "ERROR base64_decode($jdata[m])";
+    $mdata = msg_decode($m); 
+    if(!$mdata) return "ERROR msg_decode($m)";
+    if(!isset($mdata['node'])) return "ERROR node not specified in m";
+  }else{
+    if(!isset($jdata['node'])) return "ERROR node not specified in json";
+    $mdata['node'] = $jdata['node'];
+    unset( $jdata['node']);
+  }
 
   //precision
   $influx->setPrecision(PRECISION);
 
   //table
-  $influx->tbl = $jdata['tbl'];
+  //$influx->tbl = $jdata['tbl'];
+  $influx->tbl = TBL;
 
   //tags
   $influx->tag = [ 'node' => $mdata['node'] ];
