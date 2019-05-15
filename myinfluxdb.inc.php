@@ -481,7 +481,7 @@ public function protostring() {
   $first = true;
   foreach($this->fld as $k=>$v) {
     $s .= ($first?"":",") . "$k=$v";
-    $frist = false;
+    $first = false;
   }
   $s .= " ";
   $s .= $this->ts; 
