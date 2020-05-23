@@ -337,7 +337,7 @@ private function log_create() {
 private function log_truncate() {
    $delrows = $this->db->query('SELECT count(*) FROM `' . MYIF_SYSTABLE_PREFIX . 'log`')->fetchColumn() - MYIF_LOG_ROWS;
    if($delrows > 0) $this->db->query('DELETE FROM `' . MYIF_SYSTABLE_PREFIX . 'log` ORDER BY log_ts LIMIT ' . $delrows);
-   $this->log_insert("log: deleted $delrow rows",'LOG');
+   $this->log_insert("log: deleted $delrows rows",'LOG');
 }
 
 
